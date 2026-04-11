@@ -1,13 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import { ThemeProvider } from "./components/ThemeProvider";
 import "./globals.css";
 
-const _geist = Geist({ subsets: ["latin"] });
-const _geistMono = Geist_Mono({ subsets: ["latin"] });
+const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["300", "400", "500", "600", "700"] });
 
-// Inline script to prevent FOUC (Flash of Unstyled Content)
-// Runs before React hydrates to set the correct theme class immediately
 const themeScript = `
 (function() {
   try {
@@ -21,7 +18,6 @@ const themeScript = `
 })();
 `;
 
-// Service Worker registration script
 const swScript = `
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function() {
@@ -106,7 +102,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <script dangerouslySetInnerHTML={{ __html: swScript }} />
       </head>
-      <body className="font-sans antialiased overscroll-none">
+      <body className={`${jakarta.className} antialiased overscroll-none`}>
         <ThemeProvider>
           {children}
         </ThemeProvider>

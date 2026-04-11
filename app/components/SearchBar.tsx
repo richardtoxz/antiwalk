@@ -82,7 +82,6 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
     handleCollapse();
   }, [handleCollapse]);
 
-  // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isExpanded) {
@@ -93,7 +92,6 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isExpanded, handleCollapse]);
 
-  // Handle click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -110,7 +108,6 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className={cn(
           "fixed inset-0 bg-foreground/20 backdrop-blur-sm z-20 transition-opacity duration-300",
@@ -119,7 +116,6 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
         aria-hidden="true"
       />
 
-      {/* Search Container */}
       <div
         ref={containerRef}
         className={cn(
@@ -131,27 +127,24 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
       >
         <div
           className={cn(
-            "bg-card/95 backdrop-blur-xl border border-border/50 transition-all duration-300 ease-out",
+            "bg-card/95 backdrop-blur-xl border border-border/50 transition-all duration-200 ease-out",
             isExpanded
-              ? "rounded-none md:rounded-b-2xl shadow-2xl"
-              : "rounded-2xl shadow-lg"
+              ? "rounded-none md:rounded-b-xl shadow-md"
+              : "rounded-xl shadow-md"
           )}
         >
-          {/* Search Input Area */}
           <div
             className={cn(
               "flex items-center gap-2 px-3 transition-all duration-300",
               isExpanded ? "py-3 safe-top" : "py-2.5"
             )}
           >
-            {/* Menu/Back Button */}
             <button
               onClick={isExpanded ? handleCollapse : onMenuClick}
               className={cn(
-                "p-2.5 rounded-xl text-muted-foreground transition-all duration-200",
+                "p-2.5 rounded-lg text-muted-foreground transition-all duration-200",
                 "hover:bg-accent hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                "active:scale-95"
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               )}
               aria-label={isExpanded ? "Fechar busca" : "Abrir menu"}
             >
@@ -162,7 +155,6 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
               )}
             </button>
 
-            {/* Search Input */}
             <div className="flex-1 relative">
               <input
                 ref={inputRef}
@@ -186,13 +178,11 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
               />
             </div>
 
-            {/* Search/Clear Button */}
             <button
               onClick={query ? () => handleSearch("") : handleExpand}
               className={cn(
-                "p-2.5 rounded-xl transition-all duration-200",
+                "p-2.5 rounded-lg transition-all duration-200",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                "active:scale-95",
                 query
                   ? "text-muted-foreground hover:text-foreground hover:bg-accent"
                   : "text-primary bg-primary/10 hover:bg-primary/20"
@@ -206,11 +196,9 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
               )}
             </button>
 
-            {/* Theme Toggle - only when not expanded */}
             {!isExpanded && <ThemeToggle />}
           </div>
 
-          {/* Search Results */}
           <div
             id="search-results"
             role="listbox"
@@ -229,10 +217,9 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
                       <button
                         onClick={() => handleResultClick(result)}
                         className={cn(
-                          "w-full flex items-center gap-3 p-3 rounded-xl text-left",
+                          "w-full flex items-center gap-3 p-3 rounded-lg text-left",
                           "hover:bg-accent transition-colors duration-150",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                          "active:scale-[0.99]"
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                         )}
                         role="option"
                         aria-selected={false}
@@ -272,7 +259,7 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
                         <button
                           onClick={() => handleResultClick(result)}
                           className={cn(
-                            "w-full flex items-center gap-3 p-3 rounded-xl text-left",
+                            "w-full flex items-center gap-3 p-3 rounded-lg text-left",
                             "hover:bg-accent transition-colors duration-150",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                           )}

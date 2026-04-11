@@ -11,7 +11,6 @@ import {
 import { MapPin, Bus, TrainFront, ChevronDown, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Snap points as percentage of viewport height (from bottom)
 const SNAP_POINTS = {
   closed: 0,
   peek: 15,
@@ -86,15 +85,12 @@ function getVelocitySnapPoint(
   currentHeight: number,
   velocity: number
 ): SnapPoint {
-  // If velocity is significant, snap in the direction of movement
   if (Math.abs(velocity) > 0.5) {
     if (velocity > 0) {
-      // Moving up
       if (currentHeight < SNAP_POINTS.peek) return "peek";
       if (currentHeight < SNAP_POINTS.half) return "half";
       return "full";
     } else {
-      // Moving down
       if (currentHeight > SNAP_POINTS.half) return "half";
       if (currentHeight > SNAP_POINTS.peek) return "peek";
       return "closed";
@@ -110,7 +106,6 @@ export default function BottomSheet() {
   const [isDragging, setIsDragging] = useState(false);
   const [heightPercent, setHeightPercent] = useState<number>(SNAP_POINTS.peek);
 
-  // Drag state refs (avoid re-renders during drag)
   const dragState = useRef({
     startY: 0,
     startHeight: 0,
@@ -119,10 +114,8 @@ export default function BottomSheet() {
     velocity: 0,
   });
 
-  // Animation frame ref
   const rafRef = useRef<number | null>(null);
 
-  // Check if we're on desktop
   const [isDesktop, setIsDesktop] = useState(false);
 
   useEffect(() => {
@@ -132,7 +125,6 @@ export default function BottomSheet() {
     return () => window.removeEventListener("resize", checkDesktop);
   }, []);
 
-  // Animate to snap point
   const animateToSnap = useCallback((snap: SnapPoint) => {
     const targetHeight = SNAP_POINTS[snap];
     setCurrentSnap(snap);
@@ -147,7 +139,6 @@ export default function BottomSheet() {
         if (Math.abs(diff) < 0.5) {
           return targetHeight;
         }
-        // Smooth spring-like animation
         return current + diff * 0.15;
       });
 
@@ -156,7 +147,6 @@ export default function BottomSheet() {
 
     animate();
 
-    // Stop animation after transition
     setTimeout(() => {
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);
@@ -165,7 +155,6 @@ export default function BottomSheet() {
     }, 300);
   }, []);
 
-  // Handle pointer/touch start
   const handleDragStart = useCallback(
     (clientY: number) => {
       if (isDesktop) return;
@@ -186,7 +175,6 @@ export default function BottomSheet() {
     [heightPercent, isDesktop]
   );
 
-  // Handle pointer/touch move
   const handleDragMove = useCallback(
     (clientY: number) => {
       if (!isDragging || isDesktop) return;
@@ -196,7 +184,6 @@ export default function BottomSheet() {
       const viewportHeight = window.innerHeight;
       const deltaPercent = (deltaY / viewportHeight) * 100;
 
-      // Calculate velocity
       const now = Date.now();
       const timeDelta = now - lastTime;
       if (timeDelta > 0) {
@@ -207,11 +194,9 @@ export default function BottomSheet() {
       dragState.current.lastY = clientY;
       dragState.current.lastTime = now;
 
-      // Calculate new height with boundaries
       let newHeight = startHeight + deltaPercent;
       newHeight = Math.max(SNAP_POINTS.closed, Math.min(SNAP_POINTS.full, newHeight));
 
-      // Add rubber-band effect at boundaries
       if (newHeight <= SNAP_POINTS.closed) {
         const overscroll = SNAP_POINTS.closed - (startHeight + deltaPercent);
         newHeight = SNAP_POINTS.closed - overscroll * 0.2;
@@ -225,7 +210,6 @@ export default function BottomSheet() {
     [isDragging, isDesktop]
   );
 
-  // Handle pointer/touch end
   const handleDragEnd = useCallback(() => {
     if (!isDragging || isDesktop) return;
 
@@ -235,10 +219,8 @@ export default function BottomSheet() {
     animateToSnap(snap);
   }, [isDragging, heightPercent, animateToSnap, isDesktop]);
 
-  // Pointer events (unified mouse + touch)
   const handlePointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
-      // Only handle on the drag handle area
       if (!(e.target as HTMLElement).closest("[data-drag-handle]")) return;
       e.preventDefault();
       handleDragStart(e.clientY);
@@ -259,7 +241,6 @@ export default function BottomSheet() {
     handleDragEnd();
   }, [handleDragEnd]);
 
-  // Touch events for better mobile support
   const handleTouchStart = useCallback(
     (e: TouchEvent<HTMLDivElement>) => {
       if (!(e.target as HTMLElement).closest("[data-drag-handle]")) return;
@@ -281,7 +262,6 @@ export default function BottomSheet() {
     handleDragEnd();
   }, [handleDragEnd]);
 
-  // Keyboard navigation for accessibility
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (isDesktop) return;
@@ -321,7 +301,6 @@ export default function BottomSheet() {
     [currentSnap, animateToSnap, isDesktop]
   );
 
-  // Prevent body scroll when sheet is expanded
   useEffect(() => {
     if (currentSnap === "full" && !isDesktop) {
       document.body.style.overflow = "hidden";
@@ -333,8 +312,6 @@ export default function BottomSheet() {
     };
   }, [currentSnap, isDesktop]);
 
-  // Desktop: always show full content
-  // Mobile: dynamic height based on drag
   const sheetHeight = isDesktop ? "auto" : `${heightPercent}dvh`;
   const showFullContent = isDesktop || currentSnap !== "peek";
 
@@ -369,7 +346,6 @@ export default function BottomSheet() {
       aria-modal={currentSnap === "full"}
       tabIndex={0}
     >
-      {/* Drag Handle - Mobile only */}
       <div
         data-drag-handle
         className={cn(
@@ -403,7 +379,6 @@ export default function BottomSheet() {
         </button>
       </div>
 
-      {/* Content Container */}
       <div
         ref={contentRef}
         className={cn(
@@ -415,42 +390,36 @@ export default function BottomSheet() {
           maxHeight: isDesktop ? undefined : `calc(${heightPercent}dvh - 60px)`,
         }}
       >
-        {/* Quick Actions */}
         <div className="grid grid-cols-2 gap-3 mb-5">
           <button
             className={cn(
               "group flex items-center justify-center gap-2.5 py-3.5 px-4 rounded-xl",
-              "bg-blue-600 text-white font-medium",
-              "shadow-lg shadow-blue-600/25",
-              "transition-all duration-200 ease-out",
-              "hover:bg-blue-700 hover:shadow-xl hover:shadow-blue-600/30 hover:scale-[1.02]",
-              "active:scale-[0.98]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+              "bg-primary text-primary-foreground font-medium",
+              "transition-colors duration-200 ease-out",
+              "hover:bg-primary/90",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
             )}
           >
-            <Bus className="w-5 h-5 transition-transform group-hover:scale-110" />
+            <Bus className="w-5 h-5" />
             <span>Ônibus</span>
           </button>
           <button
             className={cn(
               "group flex items-center justify-center gap-2.5 py-3.5 px-4 rounded-xl",
-              "bg-emerald-600 text-white font-medium",
-              "shadow-lg shadow-emerald-600/25",
-              "transition-all duration-200 ease-out",
-              "hover:bg-emerald-700 hover:shadow-xl hover:shadow-emerald-600/30 hover:scale-[1.02]",
-              "active:scale-[0.98]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+              "bg-cta text-cta-foreground font-medium",
+              "transition-colors duration-200 ease-out",
+              "hover:bg-cta/90",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cta/80 focus-visible:ring-offset-2 focus-visible:ring-offset-card"
             )}
           >
-            <TrainFront className="w-5 h-5 transition-transform group-hover:scale-110" />
+            <TrainFront className="w-5 h-5" />
             <span>Metrô</span>
           </button>
         </div>
 
-        {/* AI Suggestion Banner - Only shown when expanded */}
         <div
           className={cn(
-            "mb-5 p-4 rounded-xl bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 border border-violet-500/20",
+            "mb-5 p-4 rounded-xl bg-primary/5 border border-primary/20",
             "transition-all duration-300",
             showFullContent
               ? "opacity-100 translate-y-0"
@@ -458,8 +427,8 @@ export default function BottomSheet() {
           )}
         >
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-white" />
+            <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-primary flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
               <p className="font-semibold text-foreground text-sm">
@@ -473,7 +442,6 @@ export default function BottomSheet() {
           </div>
         </div>
 
-        {/* Recent Places Section */}
         <div
           className={cn(
             "transition-all duration-300",
@@ -496,10 +464,9 @@ export default function BottomSheet() {
                 <button
                   key={place.id}
                   className={cn(
-                    "group flex items-start gap-3 p-3 rounded-xl text-left",
-                    "hover:bg-accent transition-all duration-150",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                    "active:scale-[0.99]"
+                    "group flex items-start gap-3 p-3 rounded-lg text-left",
+                    "hover:bg-accent transition-colors duration-150",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                   )}
                   style={{
                     animationDelay: `${index * 50}ms`,
@@ -509,9 +476,9 @@ export default function BottomSheet() {
                     className={cn(
                       "flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
                       place.type === "bus" &&
-                      "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
+                      "bg-primary/10 text-primary dark:bg-primary/20",
                       place.type === "metro" &&
-                      "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
+                      "bg-cta/10 text-cta dark:bg-cta/20",
                       place.type === "location" &&
                       "bg-secondary text-muted-foreground"
                     )}
