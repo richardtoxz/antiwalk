@@ -1,69 +1,156 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Menu, Search, X, MapPin, Clock, ArrowLeft } from "lucide-react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import {
+  ArrowLeft,
+  Bus,
+  Clock,
+  Menu,
+  Search,
+  TrainFront,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { MetroStationsResponse, SearchSelection } from "@/lib/transport/types";
 import ThemeToggle from "./ThemeToggle";
 
-interface SearchResult {
-  id: string;
-  title: string;
-  subtitle: string;
-  type: "location" | "line" | "station";
+const RECENTS_STORAGE_KEY = "transporte-df-recent-searches";
+const MAX_RESULTS = 20;
+const MAX_RECENTS = 6;
+
+function isSearchSelection(value: unknown): value is SearchSelection {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<SearchSelection>;
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.title !== "string" ||
+    typeof candidate.subtitle !== "string"
+  ) {
+    return false;
+  }
+
+  if (candidate.type === "line") {
+    return typeof candidate.shortName === "string";
+  }
+
+  if (candidate.type === "station") {
+    return typeof candidate.stationCode === "string";
+  }
+
+  return false;
 }
 
-const mockResults: SearchResult[] = [
-  {
-    id: "1",
-    title: "Rodoviária do Plano Piloto",
-    subtitle: "Asa Norte, Brasília",
-    type: "station",
-  },
-  {
-    id: "2",
-    title: "Estação Águas Claras",
-    subtitle: "Metrô DF - Linha Verde",
-    type: "station",
-  },
-  {
-    id: "3",
-    title: "Linha 0.116",
-    subtitle: "W3 Norte / Eixo Monumental",
-    type: "line",
-  },
-  {
-    id: "4",
-    title: "Praça dos Três Poderes",
-    subtitle: "Zona Cívico-Administrativa",
-    type: "location",
-  },
-];
+function loadRecentSearches(): SearchSelection[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = localStorage.getItem(RECENTS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter(isSearchSelection).slice(0, MAX_RECENTS);
+  } catch {
+    return [];
+  }
+}
+
+function persistRecentSearches(items: SearchSelection[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(items.slice(0, MAX_RECENTS)));
+  } catch {
+    // Ignore storage failures and keep search functional.
+  }
+}
+
+function pushRecentSearch(
+  items: SearchSelection[],
+  selected: SearchSelection
+): SearchSelection[] {
+  const withoutDuplicate = items.filter((item) => item.id !== selected.id);
+  return [selected, ...withoutDuplicate].slice(0, MAX_RECENTS);
+}
 
 interface SearchBarProps {
+  lines: string[];
+  stations?: MetroStationsResponse;
+  isLoading?: boolean;
+  onSelectResult: (result: SearchSelection) => void;
   onMenuClick?: () => void;
+  selectedLines?: string[];
+  onRemoveLine?: (line: string) => void;
 }
 
-export default function SearchBar({ onMenuClick }: SearchBarProps) {
+export default function SearchBar({
+  lines,
+  stations,
+  isLoading = false,
+  onSelectResult,
+  onMenuClick,
+  selectedLines = [],
+  onRemoveLine,
+}: SearchBarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
   const [isFocused, setIsFocused] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<SearchSelection[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleSearch = useCallback((searchQuery: string) => {
-    setQuery(searchQuery);
-    if (searchQuery.length > 0) {
-      const filtered = mockResults.filter(
-        (r) =>
-          r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.subtitle.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      setResults(filtered);
-    } else {
-      setResults([]);
-    }
+  useEffect(() => {
+    setRecentSearches(loadRecentSearches());
   }, []);
+
+  const searchableItems = useMemo<SearchSelection[]>(() => {
+    const stationItems: SearchSelection[] = Object.entries(stations ?? {}).map(
+      ([stationCode, station]) => ({
+        id: `station-${stationCode}`,
+        type: "station",
+        title: station.nome,
+        subtitle: `Metrô DF - Linha ${station.linha}`,
+        stationCode,
+      })
+    );
+
+    const lineItems: SearchSelection[] = lines.map((line) => ({
+      id: `line-${line}`,
+      type: "line",
+      title: `Linha ${line}`,
+      subtitle: "Ônibus DF",
+      shortName: line,
+    }));
+
+    return [...stationItems, ...lineItems];
+  }, [lines, stations]);
+
+  const filteredResults = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    return searchableItems
+      .filter(
+        (item) =>
+          item.title.toLowerCase().includes(normalizedQuery) ||
+          item.subtitle.toLowerCase().includes(normalizedQuery)
+      )
+      .slice(0, MAX_RESULTS);
+  }, [query, searchableItems]);
 
   const handleExpand = useCallback(() => {
     setIsExpanded(true);
@@ -73,14 +160,27 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
   const handleCollapse = useCallback(() => {
     setIsExpanded(false);
     setQuery("");
-    setResults([]);
     setIsFocused(false);
   }, []);
 
-  const handleResultClick = useCallback((result: SearchResult) => {
-    console.log("[v0] Selected result:", result);
-    handleCollapse();
-  }, [handleCollapse]);
+  const handleResultClick = useCallback(
+    (result: SearchSelection) => {
+      onSelectResult(result);
+
+      setRecentSearches((current) => {
+        const next = pushRecentSearch(current, result);
+        persistRecentSearches(next);
+        return next;
+      });
+
+      handleCollapse();
+    },
+    [handleCollapse, onSelectResult]
+  );
+
+  const handleSearch = useCallback((searchQuery: string) => {
+    setQuery(searchQuery);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -172,7 +272,7 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
                   "transition-all duration-200"
                 )}
                 aria-label="Campo de busca"
-                aria-expanded={isExpanded && results.length > 0}
+                aria-expanded={isExpanded && filteredResults.length > 0}
                 aria-controls="search-results"
                 role="combobox"
               />
@@ -199,20 +299,43 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
             {!isExpanded && <ThemeToggle />}
           </div>
 
+          {selectedLines && selectedLines.length > 0 && (
+            <div className="flex items-center gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-none border-t border-border/10 pt-2.5">
+              {selectedLines.map((line) => (
+                <div
+                  key={line}
+                  className="flex items-center gap-1.5 bg-primary/10 border border-primary/20 text-primary text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
+                >
+                  <span>Linha {line}</span>
+                  <button
+                    onClick={() => onRemoveLine?.(line)}
+                    className="hover:bg-primary/20 rounded-full p-0.5 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div
             id="search-results"
             role="listbox"
             className={cn(
               "overflow-hidden transition-all duration-300 ease-out",
-              isExpanded && (results.length > 0 || isFocused)
+              isExpanded && (filteredResults.length > 0 || isFocused)
                 ? "max-h-[60vh] opacity-100"
                 : "max-h-0 opacity-0"
             )}
           >
             <div className="border-t border-border/50">
-              {results.length > 0 ? (
+              {query.length > 0 && isLoading ? (
+                <div className="py-8 px-4 text-center">
+                  <p className="text-muted-foreground">Carregando dados...</p>
+                </div>
+              ) : filteredResults.length > 0 ? (
                 <ul className="py-2 px-2">
-                  {results.map((result, index) => (
+                  {filteredResults.map((result, index) => (
                     <li key={result.id}>
                       <button
                         onClick={() => handleResultClick(result)}
@@ -227,8 +350,19 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
                           animationDelay: `${index * 50}ms`,
                         }}
                       >
-                        <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground">
-                          <MapPin className="w-5 h-5" />
+                        <div
+                          className={cn(
+                            "flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center",
+                            result.type === "line"
+                              ? "bg-primary/10 text-primary"
+                              : "bg-cta/10 text-cta"
+                          )}
+                        >
+                          {result.type === "line" ? (
+                            <Bus className="w-5 h-5" />
+                          ) : (
+                            <TrainFront className="w-5 h-5" />
+                          )}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-foreground truncate">
@@ -253,8 +387,13 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 px-1">
                     Buscas recentes
                   </p>
-                  <ul>
-                    {mockResults.slice(0, 3).map((result) => (
+                  {recentSearches.length === 0 ? (
+                    <p className="px-3 pb-2 text-sm text-muted-foreground">
+                      Nenhuma busca recente ainda.
+                    </p>
+                  ) : (
+                    <ul>
+                      {recentSearches.map((result) => (
                       <li key={result.id}>
                         <button
                           onClick={() => handleResultClick(result)}
@@ -264,8 +403,19 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                           )}
                         >
-                          <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground">
-                            <Clock className="w-5 h-5" />
+                          <div
+                            className={cn(
+                              "flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center",
+                              result.type === "line"
+                                ? "bg-primary/10 text-primary"
+                                : "bg-cta/10 text-cta"
+                            )}
+                          >
+                            {result.type === "line" ? (
+                              <Bus className="w-5 h-5" />
+                            ) : (
+                              <Clock className="w-5 h-5" />
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-foreground truncate">
@@ -278,7 +428,8 @@ export default function SearchBar({ onMenuClick }: SearchBarProps) {
                         </button>
                       </li>
                     ))}
-                  </ul>
+                    </ul>
+                  )}
                 </div>
               )}
             </div>

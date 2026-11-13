@@ -5,11 +5,35 @@ import {
   useEffect,
   useCallback,
   useState,
+  useMemo,
   type PointerEvent,
   type TouchEvent,
 } from "react";
-import { MapPin, Bus, TrainFront, ChevronDown, Sparkles } from "lucide-react";
+import {
+  AlertCircle,
+  Bus,
+  ChevronDown,
+  Clock3,
+  Loader2,
+  Radio,
+  TrainFront,
+  Wifi,
+  X,
+  TrendingUp,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import ArrivalPanel from './ArrivalPanel';
+import { positionQuality } from '@/lib/transport/quality';
+import type {
+  BusRouteDetailsResponse,
+  BusStop,
+  BusVehicle,
+  MetroRealtimeMode,
+  MetroScheduleEntry,
+  MetroStation,
+  MetroTrainsResponse,
+  SocketConnectionState,
+} from "@/lib/transport/types";
 
 const SNAP_POINTS = {
   closed: 0,
@@ -20,51 +44,37 @@ const SNAP_POINTS = {
 
 type SnapPoint = keyof typeof SNAP_POINTS;
 
-interface RecentPlace {
-  id: string;
-  title: string;
-  subtitle: string;
-  icon: typeof MapPin;
-  type: "bus" | "metro" | "location";
-}
+interface BottomSheetProps {
+  selectedStation?: MetroStation;
+  selectedPlatform: string | null;
+  onSelectPlatform: (platform: string) => void;
+  metroTrains?: MetroTrainsResponse;
+  metroStatus?: MetroScheduleEntry;
+  metroRealtimeMode: MetroRealtimeMode;
+  isMetroLoading: boolean;
+  metroError: string | null;
+  isBusLoading: boolean;
+  busError: string | null;
+  onRetryBus: () => void;
+  busLastUpdate: string | null;
+  busDataQuality: string;
+  now: number;
+  selectedStopId: number | null;
+  onSelectStop: (id: number | null) => void;
+  socketState: SocketConnectionState;
 
-const recentPlaces: RecentPlace[] = [
-  {
-    id: "1",
-    title: "Rodoviária do Plano Piloto",
-    subtitle: "Asa Norte",
-    icon: MapPin,
-    type: "location",
-  },
-  {
-    id: "2",
-    title: "Estação Águas Claras",
-    subtitle: "Metrô DF",
-    icon: TrainFront,
-    type: "metro",
-  },
-  {
-    id: "3",
-    title: "Linha 0.116",
-    subtitle: "W3 Norte / Eixo Monumental",
-    icon: Bus,
-    type: "bus",
-  },
-  {
-    id: "4",
-    title: "Estação Central",
-    subtitle: "Metrô DF - Asa Sul",
-    icon: TrainFront,
-    type: "metro",
-  },
-  {
-    id: "5",
-    title: "Terminal Asa Norte",
-    subtitle: "Integração de ônibus",
-    icon: Bus,
-    type: "bus",
-  },
-];
+  // New multi-line selection props
+  selectedLines: string[];
+  focusedLine: string | null;
+  onSelectFocusedLine: (line: string | null) => void;
+  onRemoveLine: (line: string) => void;
+  selectedStationCode: string | null;
+  onSelectStationCode: (code: string | null) => void;
+  lineDirections: Record<string, number>;
+  onChangeLineDirection: (line: string, directionId: number) => void;
+  activeBusRoutesData: Record<string, BusRouteDetailsResponse>;
+  busVehicles: BusVehicle[];
+}
 
 function getSnapPointFromHeight(heightPercent: number): SnapPoint {
   const points = Object.entries(SNAP_POINTS) as [SnapPoint, number][];
@@ -90,18 +100,89 @@ function getVelocitySnapPoint(
       if (currentHeight < SNAP_POINTS.peek) return "peek";
       if (currentHeight < SNAP_POINTS.half) return "half";
       return "full";
-    } else {
-      if (currentHeight > SNAP_POINTS.half) return "half";
-      if (currentHeight > SNAP_POINTS.peek) return "peek";
-      return "closed";
     }
+
+    if (currentHeight > SNAP_POINTS.half) return "half";
+    if (currentHeight > SNAP_POINTS.peek) return "peek";
+    return "closed";
   }
+
   return getSnapPointFromHeight(currentHeight);
 }
 
-export default function BottomSheet() {
+function getRealtimeModeLabel(mode: MetroRealtimeMode): string {
+  if (mode === "ws") {
+    return "Recebendo previsões";
+  }
+
+  if (mode === "polling") {
+    return "Atualizando previsões";
+  }
+
+  return "Aguardando previsões";
+}
+
+function formatTimeAgo(timestamp: string | null, now: number): string {
+  if (!timestamp) {
+    return "Sem atualização ainda";
+  }
+
+  const deltaMs = now - new Date(timestamp).getTime();
+  if (!Number.isFinite(deltaMs) || deltaMs < 0) {
+    return "Atualizado agora";
+  }
+
+  const seconds = Math.floor(deltaMs / 1000);
+  if (seconds < 60) {
+    return `Atualizado há ${seconds}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  return `Atualizado há ${minutes}min`;
+}
+
+function formatMetroOperation(status?: MetroScheduleEntry): string {
+  if (!status) {
+    return "Horário indisponível";
+  }
+
+  if (status.st_paralisado === "s") {
+    return "Operação paralisada";
+  }
+
+  return `Operando hoje: ${status.ds_hora_inicio.slice(0, 5)} - ${status.ds_hora_fim.slice(0, 5)}`;
+}
+
+export default function BottomSheet({
+  selectedStation,
+  selectedPlatform,
+  onSelectPlatform,
+  metroTrains,
+  metroStatus,
+  metroRealtimeMode,
+  isMetroLoading,
+  metroError,
+  isBusLoading,
+  busError,
+  onRetryBus,
+  busLastUpdate,
+  busDataQuality,
+  now,
+  selectedStopId,
+  onSelectStop,
+  socketState,
+  selectedLines,
+  focusedLine,
+  onSelectFocusedLine,
+  onRemoveLine,
+  selectedStationCode,
+  onSelectStationCode,
+  lineDirections,
+  onChangeLineDirection,
+  activeBusRoutesData,
+  busVehicles,
+}: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint>("peek");
   const [isDragging, setIsDragging] = useState(false);
   const [heightPercent, setHeightPercent] = useState<number>(SNAP_POINTS.peek);
@@ -115,8 +196,16 @@ export default function BottomSheet() {
   });
 
   const rafRef = useRef<number | null>(null);
-
   const [isDesktop, setIsDesktop] = useState(false);
+
+  const currentDirectionId = focusedLine ? (lineDirections[focusedLine] ?? 0) : 0;
+  const currentRouteData = focusedLine ? activeBusRoutesData[focusedLine] : undefined;
+  const currentDirection = currentRouteData?.directions.find(
+    (d) => d.directionId === currentDirectionId
+  );
+  const routeStops = currentDirection?.tripDetails.stops ?? [];
+  const dataLabels: Record<string, string> = { fresh: 'Posições recentes', mixed: 'Parte das posições está desatualizada', stale: 'Posições antigas', expired: 'Posições expiradas',
+    unknown: 'Horário das posições não confirmado', waiting: 'Aguardando posições', unavailable: 'Dados ao vivo indisponíveis', empty: 'Nenhum veículo informado pela fonte' };
 
   useEffect(() => {
     const checkDesktop = () => setIsDesktop(window.innerWidth >= 768);
@@ -128,6 +217,7 @@ export default function BottomSheet() {
   const animateToSnap = useCallback((snap: SnapPoint) => {
     const targetHeight = SNAP_POINTS[snap];
     setCurrentSnap(snap);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setHeightPercent(targetHeight); return; }
 
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
@@ -307,13 +397,13 @@ export default function BottomSheet() {
     } else {
       document.body.style.overflow = "";
     }
+
     return () => {
       document.body.style.overflow = "";
     };
   }, [currentSnap, isDesktop]);
 
   const sheetHeight = isDesktop ? "auto" : `${heightPercent}dvh`;
-  const showFullContent = isDesktop || currentSnap !== "peek";
 
   return (
     <div
@@ -324,7 +414,9 @@ export default function BottomSheet() {
         "md:rounded-2xl md:border md:shadow-2xl",
         "left-0 right-0 bottom-0 rounded-t-3xl border-t shadow-[0_-8px_30px_rgba(0,0,0,0.12)]",
         isDragging ? "cursor-grabbing" : "",
-        currentSnap === "full" && !isDesktop ? "shadow-[0_-16px_50px_rgba(0,0,0,0.2)]" : ""
+        currentSnap === "full" && !isDesktop
+          ? "shadow-[0_-16px_50px_rgba(0,0,0,0.2)]"
+          : ""
       )}
       style={{
         height: sheetHeight,
@@ -340,7 +432,6 @@ export default function BottomSheet() {
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      onKeyDown={handleKeyDown}
       role="dialog"
       aria-label="Painel de navegação"
       aria-modal={currentSnap === "full"}
@@ -349,28 +440,21 @@ export default function BottomSheet() {
       <div
         data-drag-handle
         className={cn(
-          "w-full flex flex-col items-center pt-3 pb-2 cursor-grab md:hidden",
+          "w-full flex items-center justify-center gap-3 px-4 py-2 cursor-grab md:hidden",
           "touch-none select-none",
           isDragging && "cursor-grabbing"
         )}
-        aria-label="Arraste para expandir ou recolher"
-        role="slider"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(heightPercent)}
       >
-        <div
-          className={cn(
-            "w-10 h-1 bg-muted-foreground/30 rounded-full transition-all duration-200",
-            isDragging && "w-12 bg-muted-foreground/50"
-          )}
-        />
+        <div role="slider" tabIndex={0} aria-label="Arraste para expandir ou recolher" aria-valuemin={0} aria-valuemax={85}
+          aria-valuenow={Math.round(heightPercent)} onKeyDown={handleKeyDown} className="flex min-h-11 flex-1 items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-primary">
+          <div className={cn("w-10 h-1 bg-muted-foreground/30 rounded-full transition-all duration-200", isDragging && "w-12 bg-muted-foreground/50")} />
+        </div>
         <button
           onClick={() =>
             animateToSnap(currentSnap === "peek" ? "half" : "peek")
           }
           className={cn(
-            "mt-2 p-1 rounded-full transition-transform duration-300",
+            "flex h-11 w-11 items-center justify-center rounded-full transition-transform duration-300 motion-reduce:transition-none",
             currentSnap !== "peek" && "rotate-180"
           )}
           aria-label={currentSnap === "peek" ? "Expandir" : "Recolher"}
@@ -380,7 +464,6 @@ export default function BottomSheet() {
       </div>
 
       <div
-        ref={contentRef}
         className={cn(
           "px-4 pb-safe-bottom md:p-5 overflow-y-auto overflow-x-hidden",
           "scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent",
@@ -390,113 +473,393 @@ export default function BottomSheet() {
           maxHeight: isDesktop ? undefined : `calc(${heightPercent}dvh - 60px)`,
         }}
       >
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          <button
-            className={cn(
-              "group flex items-center justify-center gap-2.5 py-3.5 px-4 rounded-xl",
-              "bg-primary text-primary-foreground font-medium",
-              "transition-colors duration-200 ease-out",
-              "hover:bg-primary/90",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+        {/* Horizontal scrollable tab bar */}
+        {(selectedLines.length > 0 || selectedStationCode) && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 scrollbar-none border-b border-border/50 select-none">
+            {selectedStationCode && (
+              <button
+                onClick={() => onSelectFocusedLine(null)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all duration-200 border",
+                  focusedLine === null
+                    ? "bg-cta/10 text-cta border-cta/30 shadow-sm"
+                    : "bg-muted/40 text-muted-foreground border-transparent hover:bg-muted"
+                )}
+              >
+                <TrainFront className="w-3.5 h-3.5" />
+                <span>Metrô: {selectedStation?.nome ?? selectedStationCode}</span>
+                <span
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectStationCode(null);
+                  }}
+                  className="hover:bg-muted-foreground/20 p-0.5 rounded-full ml-1"
+                >
+                  <X className="w-3 h-3" />
+                </span>
+              </button>
             )}
-          >
-            <Bus className="w-5 h-5" />
-            <span>Ônibus</span>
-          </button>
-          <button
-            className={cn(
-              "group flex items-center justify-center gap-2.5 py-3.5 px-4 rounded-xl",
-              "bg-cta text-cta-foreground font-medium",
-              "transition-colors duration-200 ease-out",
-              "hover:bg-cta/90",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cta/80 focus-visible:ring-offset-2 focus-visible:ring-offset-card"
-            )}
-          >
-            <TrainFront className="w-5 h-5" />
-            <span>Metrô</span>
-          </button>
-        </div>
 
-        <div
-          className={cn(
-            "mb-5 p-4 rounded-xl bg-primary/5 border border-primary/20",
-            "transition-all duration-300",
-            showFullContent
-              ? "opacity-100 translate-y-0"
-              : "opacity-0 -translate-y-2 h-0 mb-0 p-0 overflow-hidden"
-          )}
-        >
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-primary flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <div>
-              <p className="font-semibold text-foreground text-sm">
-                Sugestão inteligente
-              </p>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Com base no horário, a Linha 0.116 está com tempo estimado de 8
-                min.
-              </p>
-            </div>
-          </div>
-        </div>
+            {selectedLines.map((line) => {
+              const routeData = activeBusRoutesData[line];
+              const isFocused = focusedLine === line;
+              const color = routeData?.route.color ?? "#2563eb";
 
-        <div
-          className={cn(
-            "transition-all duration-300",
-            showFullContent
-              ? "opacity-100 translate-y-0"
-              : "opacity-100 translate-y-0"
-          )}
-        >
-          <div className="flex items-center justify-between mb-3 px-1">
-            <h3 className="text-foreground font-semibold">Buscas Recentes</h3>
-            <button className="text-sm text-primary font-medium hover:text-primary/80 transition-colors focus-visible:outline-none focus-visible:underline">
-              Ver tudo
-            </button>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            {recentPlaces
-              .slice(0, showFullContent ? recentPlaces.length : 3)
-              .map((place, index) => (
+              return (
                 <button
-                  key={place.id}
+                  key={line}
+                  onClick={() => onSelectFocusedLine(line)}
                   className={cn(
-                    "group flex items-start gap-3 p-3 rounded-lg text-left",
-                    "hover:bg-accent transition-colors duration-150",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all duration-200 border",
+                    isFocused
+                      ? "shadow-sm"
+                      : "bg-muted/40 text-muted-foreground border-transparent hover:bg-muted"
                   )}
                   style={{
-                    animationDelay: `${index * 50}ms`,
+                    backgroundColor: isFocused ? `${color}15` : undefined,
+                    color: isFocused ? color : undefined,
+                    borderColor: isFocused ? `${color}30` : undefined,
                   }}
                 >
-                  <div
-                    className={cn(
-                      "flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                      place.type === "bus" &&
-                      "bg-primary/10 text-primary dark:bg-primary/20",
-                      place.type === "metro" &&
-                      "bg-cta/10 text-cta dark:bg-cta/20",
-                      place.type === "location" &&
-                      "bg-secondary text-muted-foreground"
-                    )}
+                  <Bus className="w-3.5 h-3.5" />
+                  <span>Linha {line}</span>
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveLine(line);
+                    }}
+                    className="hover:bg-muted-foreground/20 p-0.5 rounded-full ml-1"
                   >
-                    <place.icon className="w-5 h-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-foreground font-medium truncate group-hover:text-primary transition-colors">
-                      {place.title}
-                    </p>
-                    <p className="text-sm text-muted-foreground truncate">
-                      {place.subtitle}
-                    </p>
-                  </div>
+                    <X className="w-3 h-3" />
+                  </span>
                 </button>
-              ))}
+              );
+            })}
+          </div>
+        )}
+
+        <div className="mb-4 rounded-xl border border-border bg-background/50 p-3">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-1.5 text-muted-foreground font-medium">
+              <Wifi className="w-3.5 h-3.5" />
+              <span>{focusedLine ? dataLabels[busDataQuality] : socketState === 'open' ? 'Conexão disponível' : 'Reconectando'}</span>
+            </div>
+            {focusedLine === null && selectedStationCode ? (
+              <div className="flex items-center gap-1.5 text-muted-foreground font-medium">
+                <Radio className="w-3.5 h-3.5 animate-pulse text-cta" />
+                <span>{getRealtimeModeLabel(metroRealtimeMode)}</span>
+              </div>
+            ) : null}
           </div>
         </div>
+
+        {/* Empty State */}
+        {selectedLines.length === 0 && !selectedStationCode && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <p className="text-sm font-semibold text-foreground">Escolha uma linha ou estação</p>
+              <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                Use a barra de busca acima para ver o trajeto de ônibus com GPS em tempo real, ou selecione uma estação do metrô.
+              </p>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <p className="text-sm font-semibold text-foreground">Funcionalidades</p>
+              <ul className="mt-2 space-y-2.5 text-xs text-muted-foreground">
+                <li className="flex items-center gap-2">
+                  <Bus className="w-4 h-4 text-primary" />
+                  <span>Pesquise múltiplas linhas de ônibus simultaneamente</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-emerald-500" />
+                  <span>Filtre ônibus e paradas por sentido (Ida/Volta)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <TrainFront className="w-4 h-4 text-cta" />
+                  <span>Chegada dos trens e status operacional do Metrô-DF</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {/* Focused Bus Line Details */}
+        {focusedLine && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm relative overflow-hidden">
+              <div
+                className="absolute left-0 top-0 bottom-0 w-1.5"
+                style={{ backgroundColor: currentRouteData?.route.color ?? "#2563eb" }}
+              />
+              <div className="pl-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Linha ativa</p>
+                <h3 className="mt-0.5 text-lg font-bold text-foreground">
+                  Linha {focusedLine}
+                </h3>
+                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                  {currentRouteData?.route.longName ?? "Carregando itinerário..."}
+                </p>
+
+                {currentRouteData && (
+                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
+                    <span
+                      className="rounded-full px-2 py-0.5"
+                      style={{
+                        backgroundColor: `${currentRouteData.route.color}15`,
+                        color: currentRouteData.route.color
+                      }}
+                    >
+                      {busVehicles.filter(v => positionQuality(v, now) === 'fresh').length} posição(ões) recente(s)
+                    </span>
+                    <span className="rounded-full bg-secondary/50 px-2 py-0.5 text-foreground">
+                      {routeStops.length} paradas
+                    </span>
+                    {currentRouteData.route.price ? (
+                      <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">
+                        Tarifa R$ {currentRouteData.route.price.toFixed(2)}
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-muted-foreground">{formatTimeAgo(busLastUpdate, now)} · consulta à fonte</p>
+                {['mixed', 'stale', 'expired', 'unknown', 'unavailable'].includes(busDataQuality) && <p role="status" className="mt-2 text-xs text-amber-600">{dataLabels[busDataQuality]}. Posições antigas não confirmam a chegada do ônibus.</p>}
+              </div>
+            </div>
+
+            {/* Direction toggle */}
+            {currentRouteData && currentRouteData.directions.length > 0 && (
+              <div className="rounded-xl border border-border bg-card p-3 shadow-sm">
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">
+                  Sentido da Rota
+                </h4>
+                {currentRouteData.directions.length === 1 ? (
+                  <div className="flex items-center gap-2 rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground font-medium">
+                    <TrendingUp className="h-4 w-4 text-emerald-500" />
+                    <span>Sentido único (Circular)</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {currentRouteData.directions.map((dir) => {
+                      const isSelected = dir.directionId === currentDirectionId;
+                      const color = currentRouteData.route.color ?? "#2563eb";
+                      return (
+                        <button
+                          key={dir.directionId}
+                          onClick={() => onChangeLineDirection(focusedLine, dir.directionId)}
+                          className={cn(
+                            "flex flex-col items-start gap-0.5 rounded-lg border p-2 text-left transition-all duration-200",
+                            isSelected
+                              ? "shadow-sm"
+                              : "border-border bg-background hover:bg-muted/30"
+                          )}
+                          style={{
+                            borderColor: isSelected ? color : undefined,
+                            backgroundColor: isSelected ? `${color}08` : undefined,
+                          }}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="w-1.5 h-1.5 rounded-full"
+                              style={{ backgroundColor: isSelected ? color : "#9ca3af" }}
+                            />
+                            <span
+                              className="text-xs font-bold"
+                              style={{ color: isSelected ? color : "#4b5563" }}
+                            >
+                              {dir.directionId === 0 ? "Ida" : "Volta"}
+                            </span>
+                          </div>
+                          <span className="text-[9px] text-muted-foreground font-medium truncate w-full">
+                            {dir.tripDetails.tripName || "Ver no mapa"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isBusLoading && (
+              <div className="rounded-xl border border-border bg-card p-4 text-xs text-muted-foreground shadow-sm">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span>Sincronizando paradas e GPS...</span>
+                </div>
+              </div>
+            )}
+
+            {busError && (
+              <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive shadow-sm">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 mt-0.5" />
+                  <span>{busError}</span>
+                </div>
+                <button type="button" onClick={onRetryBus} className="mt-2 min-h-11 rounded-lg border border-current px-3 font-semibold">Tentar novamente</button>
+              </div>
+            )}
+
+            {currentRouteData && routeStops.length > 0 && <ArrivalPanel routeId={currentRouteData.route.routeId} stops={routeStops} selectedStopId={selectedStopId} onSelectStop={onSelectStop} />}
+
+            {/* Vertical timeline itinerario */}
+            {!isBusLoading && !busError && routeStops.length > 0 && (
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between border-b border-border/50 pb-2">
+                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Itinerário</h4>
+                  <span className="text-[10px] text-muted-foreground font-semibold">
+                    {routeStops.length} paradas
+                  </span>
+                </div>
+                <div className="relative pl-4 space-y-3 max-h-[220px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-muted">
+                  {/* Timeline bar */}
+                  <div
+                    className="absolute left-[6px] top-1.5 bottom-1.5 w-[2px] rounded-full"
+                    style={{
+                      backgroundColor: currentRouteData?.route.color
+                        ? `${currentRouteData.route.color}20`
+                        : "rgba(37,99,235,0.15)"
+                    }}
+                  />
+                  {routeStops.map((stop, index) => {
+                    const isFirst = index === 0;
+                    const isLast = index === routeStops.length - 1;
+                    const color = currentRouteData?.route.color ?? "#2563eb";
+                    return (
+                      <div key={stop.stopId} className="relative flex items-start gap-2.5">
+                        {/* Circle Bullet */}
+                        <div
+                          className="absolute -left-[14px] top-1.5 w-2 h-2 rounded-full border border-card bg-background z-10"
+                          style={{
+                            borderColor: isFirst || isLast ? color : `${color}40`,
+                            backgroundColor: isFirst || isLast ? color : "#ffffff",
+                            transform: isFirst || isLast ? "scale(1.2)" : "scale(1.0)",
+                          }}
+                        />
+                        <button type="button" onClick={() => onSelectStop(stop.stopId)} className="flex-1 min-w-0 min-h-11 text-left" aria-label={`Ver chegadas em ${stop.name}`}>
+                          <p className={cn(
+                            "text-xs text-foreground truncate",
+                            (isFirst || isLast) && "font-bold"
+                          )}>
+                            {stop.name}
+                          </p>
+                          <span className="text-[9px] text-muted-foreground font-medium">
+                            Parada #{stop.stopId}
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Focused Station Details */}
+        {focusedLine === null && selectedStationCode && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm relative overflow-hidden">
+              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-cta" />
+              <div className="pl-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Estação ativa</p>
+                <h3 className="mt-0.5 text-lg font-bold text-foreground">
+                  {selectedStation?.nome ?? selectedStationCode}
+                </h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Linha {selectedStation?.linha ?? "indisponível"}
+                </p>
+                <p className="mt-3 text-[10px] text-muted-foreground font-semibold">{formatMetroOperation(metroStatus)}</p>
+              </div>
+            </div>
+
+            {selectedStation && (
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Plataformas</h4>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(selectedStation.plataformas).map(
+                    ([platform, sentido]) => (
+                      <button
+                        key={platform}
+                        onClick={() => onSelectPlatform(platform)}
+                        className={cn(
+                          "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all duration-200",
+                          selectedPlatform === platform
+                            ? "border-cta bg-cta/10 text-cta shadow-sm"
+                            : "border-border bg-background text-foreground hover:bg-muted/40"
+                        )}
+                      >
+                        P{platform}: {sentido}
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
+
+            {isMetroLoading && (
+              <div className="rounded-xl border border-border bg-card p-4 text-xs text-muted-foreground shadow-sm">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-cta" />
+                  <span>Sincronizando chegadas em tempo real...</span>
+                </div>
+              </div>
+            )}
+
+            {metroError && (
+              <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive shadow-sm">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 mt-0.5" />
+                  <span>{metroError}</span>
+                </div>
+              </div>
+            )}
+
+            {!isMetroLoading && !metroError && metroTrains && (
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="mb-2.5 flex items-center justify-between border-b border-border/50 pb-2">
+                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Próximos Trens</h4>
+                  <span className="text-[10px] text-emerald-500 font-semibold uppercase">
+                    {metroTrains.status_operacional}
+                  </span>
+                </div>
+
+                {metroTrains.trens.length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-2 text-center">
+                    Sem trens no momento para esta plataforma.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {metroTrains.trens
+                      .slice()
+                      .sort(
+                        (a, b) => a.chegada_em_minutos - b.chegada_em_minutos
+                      )
+                      .map((train) => (
+                        <li
+                          key={`${train.id_trem}-${train.chegada_em_minutos}`}
+                          className="rounded-lg bg-background border border-border/40 px-3 py-2 shadow-sm"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-foreground truncate">
+                                {train.destino_final}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground font-medium truncate">
+                                Trem #{train.id_trem} • {train.sentido}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 text-xs font-bold text-cta whitespace-nowrap bg-cta/5 px-2 py-1 rounded-full border border-cta/15">
+                              <Clock3 className="h-3.5 w-3.5" />
+                              <span>{train.chegada_em_minutos} min</span>
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

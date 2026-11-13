@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
+import QueryProvider from "./components/QueryProvider";
 import { ThemeProvider } from "./components/ThemeProvider";
 import "./globals.css";
 
@@ -21,6 +22,14 @@ const themeScript = `
 const swScript = `
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function() {
+      if (${process.env.NODE_ENV !== 'production'}) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          registrations.forEach(function(registration) {
+            if (registration.active && registration.active.scriptURL === location.origin + '/sw.js') registration.unregister();
+          });
+        });
+        return;
+      }
       navigator.serviceWorker.register('/sw.js').then(
         function(registration) {
           console.log('ServiceWorker registration successful');
@@ -86,8 +95,6 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   viewportFit: "cover",
 };
 
@@ -104,7 +111,7 @@ export default function RootLayout({
       </head>
       <body className={`${jakarta.className} antialiased overscroll-none`}>
         <ThemeProvider>
-          {children}
+          <QueryProvider>{children}</QueryProvider>
         </ThemeProvider>
       </body>
     </html>
