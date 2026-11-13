@@ -5,7 +5,6 @@ import {
   useEffect,
   useCallback,
   useState,
-  useMemo,
   type PointerEvent,
   type TouchEvent,
 } from "react";
@@ -26,7 +25,6 @@ import ArrivalPanel from './ArrivalPanel';
 import { positionQuality } from '@/lib/transport/quality';
 import type {
   BusRouteDetailsResponse,
-  BusStop,
   BusVehicle,
   MetroRealtimeMode,
   MetroScheduleEntry,

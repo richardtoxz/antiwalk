@@ -1,7 +1,7 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { BACKEND_BASE_URL } from "./config";
 
-export type SseMessageListener = (payload: any) => void;
+export type SseMessageListener = (payload: unknown) => void;
 export type FallbackChangeListener = (isFallback: boolean) => void;
 
 class SseTransportClient {

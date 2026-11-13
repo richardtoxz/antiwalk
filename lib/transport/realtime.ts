@@ -27,7 +27,8 @@ export function useBusRealtimeData(selectedLines: string[], routeData: Record<st
 
   useEffect(() => {
     if (!visible) return;
-    return sseTransportClient.subscribe((payload: BusRealtimeMessage | { topic?: string; data?: { routeId?: number; status?: string }; identifier?: string; error?: string }) => {
+    return sseTransportClient.subscribe((raw) => {
+      const payload = raw as BusRealtimeMessage | { topic?: string; data?: { routeId?: number; status?: string }; identifier?: string; error?: string } | null;
       if (!payload || typeof payload !== 'object') return;
       const topic = payload.topic || '';
       const data = payload.data;
