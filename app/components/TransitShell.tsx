@@ -844,7 +844,7 @@ export default function TransitShell() {
             source: "metro-trains-source",
             layout: {
               "text-field": ["get", "id"],
-              "text-font": ["Noto Sans Bold"],
+              "text-font": ["Noto Sans Medium"],
               "text-size": 9,
               "text-anchor": "center"
             },
