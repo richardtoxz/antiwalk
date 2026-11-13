@@ -1,29 +1,43 @@
 # Antiwalk
 
-Rastreador e informador de horário de ônibus e metrô de Brasília (DF).
+Rastreador e informador de horários de ônibus e metrô de Brasília (DF). Mostra no mapa onde os veículos estão, quando chegam a cada parada e como ir de um ponto a outro usando o transporte público.
+
+## O que faz
+
+- **Mapa ao vivo**: ônibus e trens do metrô posicionados no mapa, com a idade de cada posição de GPS.
+- **Próximas chegadas**: previsões por parada ou estação, separando horários programados de previsões com GPS recente.
+- **Planejamento de viagem**: compara opções por duração, caminhada e baldeações, com até duas trocas, combinando ônibus, metrô e trechos a pé.
+- **Busca**: linhas, paradas, estações e endereços.
+- **PWA**: pode ser instalado no celular e mantém a interface e os itinerários recentes disponíveis sem conexão.
+- **Tema claro e escuro**, navegação por teclado e controles de toque de pelo menos 44 px.
+
+## Como funciona
+
+O Antiwalk é a interface. Os dados vêm de uma API própria, o projeto `websocket-serverDF`, que reúne as fontes do Metrô-DF e dos ônibus do Distrito Federal e as entrega em um formato único.
+
+- **Dados ao vivo**: as posições chegam por WebSocket e SSE. Se a conexão falha, a interface passa a consultar a API em intervalos e avisa que os dados podem estar atrasados.
+- **Qualidade das posições**: cada posição é classificada pela idade do GPS. Posições antigas não geram previsão ao vivo, e as com mais de dois minutos saem do mapa.
+- **Metrô**: as posições dos trens são estimadas a partir das previsões de chegada em cada estação.
+- **Planejamento**: o cálculo acontece no servidor, que prepara a rede de linhas e paradas. Ônibus usam a programação por dia de serviço; o metrô entra quando há previsões recentes do mesmo trem em pelo menos duas estações.
+- **Endereços e caminhadas**: a busca de endereços e os trechos a pé pelas ruas usam o Geoapify, sempre por meio do servidor.
+- **Economia de dados e bateria**: consultas periódicas e assinaturas pausam quando a página está oculta, e a busca de endereços aguarda a digitação terminar.
+- **Offline**: o service worker guarda os arquivos da interface e os itinerários com validade. Os fluxos ao vivo nunca passam pelo cache.
 
 ## Tecnologias
+
 - Next.js (App Router) sobre Vinext (Vite)
 - React 19 e TypeScript
 - Tailwind CSS
 - TanStack Query
 - MapLibre GL JS com mapa do OpenFreeMap
-- API própria (`websocket-serverDF`) com REST, WebSocket e SSE
+- WebSocket e SSE para dados em tempo real
+- Geoapify para endereços e rotas a pé
 
-## Chegadas e planejamento
+## Limitações dos dados
 
-- Posições de ônibus indicam a idade do GPS. Dados antigos ou sem horário não geram chegadas ao vivo; posições com mais de dois minutos saem do mapa.
-- Selecione uma linha e uma parada no mapa, na lista ou no itinerário para consultar próximas chegadas. Horários programados aparecem separados das previsões com GPS recente. Outras linhas da mesma parada também aparecem quando possuem programação disponível.
-- **Planejar viagem** pesquisa endereços, paradas/estações ou permite escolher pontos no mapa. Compara duração, caminhada e baldeações, com até duas trocas. Com Geoapify habilitado na API, trechos a pé mostram caminhos pelas ruas e orientações em português; caminhadas não verificadas são identificadas como aproximadas. Os traçados do transporte são aproximados e tarifas não aplicam integração.
-- Ônibus usam programação por dia de serviço e tempos previstos entre paradas; feriados e atrasos podem mudar o resultado. Metrô só entra no planejamento quando há previsões recentes do mesmo trem em pelo menos duas estações. As posições de trens no mapa são estimadas.
-- O servidor prepara a cobertura gradualmente e mantém a base salva. A interface informa quando a cobertura ainda está incompleta.
+- Os traçados do transporte entre paradas são aproximados, e caminhadas sem confirmação pelas ruas aparecem identificadas como aproximadas.
+- As tarifas não aplicam descontos de integração.
+- Feriados e atrasos podem alterar os horários programados.
+- A interface informa quando os dados estão antigos, incompletos ou indisponíveis.
 
-O planejador é carregado ao abrir. Consultas periódicas e assinaturas pausam com a página oculta; a preparação da rede fica no servidor. O app permite zoom do navegador, possui controles de toque de pelo menos 44 px nos novos painéis e navegação por teclado no planejador. O cache offline guarda arquivos da interface e itinerários com validade; não intercepta os fluxos ao vivo da API.
-
-Validação: `npm test`, `npx tsc --noEmit` e `npm run build:vinext`.
-
-## Geoapify + OpenFreeMap
-
-O OpenFreeMap continua fornecendo o mapa. A chave `GEOAPIFY_API_KEY` deve ser configurada apenas no `.env` do projeto irmão `websocket-serverDF`; reinicie essa API após alterar a chave. O navegador consulta endereços e caminhos pelo servidor, sem receber a chave.
-
-A busca de endereços espera 500 ms após a digitação, usa pelo menos três caracteres e mantém resultados recentes em cache. Consultas de planejamento acontecem ao tocar em **Comparar opções**. Trechos pelas ruas podem ser expandidos em **Ver orientações a pé**. O planejador considera seu tempo para recalcular os embarques. Geoapify e OpenStreetMap aparecem nos créditos dos resultados e do percurso; falhas não desabilitam a pesquisa de paradas/estações nem a seleção no mapa.
+Dados de mapa © OpenStreetMap, com OpenFreeMap e Geoapify.
