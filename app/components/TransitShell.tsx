@@ -91,7 +91,7 @@ function createRouteLineFeatureCollection(
           properties: {
             lineShortName: line,
             directionId: selectedDirectionId,
-            color: routeData.route.color ?? "#2563eb",
+            color: routeData.route.color ?? "#F5A300",
             isStale,
           },
         });
@@ -129,7 +129,7 @@ function createStopsFeatureCollection(
             stopId: stop.stopId,
             name: stop.name,
             lineShortName: line,
-            color: routeData.route.color ?? "#2563eb",
+            color: routeData.route.color ?? "#F5A300",
           },
         });
       });
@@ -166,7 +166,7 @@ function createVehicleFeatureCollection(
             quality: positionQuality(vehicle, now),
             heading: vehicle.heading ?? 0,
             lineShortName: vehicle.lineShortName,
-            color: routeData?.route.color ?? "#2563eb",
+            color: routeData?.route.color ?? "#F5A300",
           },
         };
       }),
@@ -736,7 +736,7 @@ export default function TransitShell() {
                 ["get", "linha"],
                 "Ceilândia", "#ff6b09",
                 "Samambaia", "#00b074",
-                "#2563eb"
+                "#8C8273"
               ],
               "circle-opacity": 1.0,
               "circle-stroke-opacity": 1.0
@@ -769,8 +769,8 @@ export default function TransitShell() {
               "text-anchor": "top"
             },
             paint: {
-              "text-color": resolvedTheme === "dark" ? "#f3f4f6" : "#1f2937",
-              "text-halo-color": resolvedTheme === "dark" ? "#111827" : "#ffffff",
+              "text-color": resolvedTheme === "dark" ? "#EFE9DC" : "#141414",
+              "text-halo-color": resolvedTheme === "dark" ? "#000000" : "#ffffff",
               "text-halo-width": 1.5
             }
           });
@@ -778,12 +778,12 @@ export default function TransitShell() {
           mapInstance.setPaintProperty(
             "metro-stations-text-layer",
             "text-color",
-            resolvedTheme === "dark" ? "#f3f4f6" : "#1f2937"
+            resolvedTheme === "dark" ? "#EFE9DC" : "#141414"
           );
           mapInstance.setPaintProperty(
             "metro-stations-text-layer",
             "text-halo-color",
-            resolvedTheme === "dark" ? "#111827" : "#ffffff"
+            resolvedTheme === "dark" ? "#000000" : "#ffffff"
           );
         }
       });
@@ -829,7 +829,7 @@ export default function TransitShell() {
                 ["get", "linha"],
                 "Ceilândia", "#ff6b09",
                 "Samambaia", "#00b074",
-                "#2563eb"
+                "#8C8273"
               ],
               "circle-stroke-width": 2,
               "circle-stroke-color": "#ffffff"
@@ -947,7 +947,7 @@ export default function TransitShell() {
               "text-anchor": "bottom"
             },
             paint: {
-              "text-color": "#1f2937",
+              "text-color": "#141414",
               "text-halo-color": "#ffffff",
               "text-halo-width": 2
             }
@@ -1222,9 +1222,9 @@ export default function TransitShell() {
             </div>
           )}
           {Object.values(staleRoutes).some((v) => v) && (
-            <div className="flex items-center gap-2 bg-blue-500/15 backdrop-blur-md border border-blue-500/30 text-blue-600 dark:text-blue-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-sm w-full transition-all duration-300">
+            <div className="flex items-center gap-2 bg-card/90 backdrop-blur-md border border-border text-foreground text-xs font-semibold px-3 py-2 rounded-lg shadow-sm w-full transition-all duration-300">
               <span className="relative flex h-2 w-2">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-foreground"></span>
               </span>
               <span>Itinerário salvo. A confirmação de atualização ainda está pendente.</span>
             </div>

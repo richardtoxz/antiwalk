@@ -1,10 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Barlow } from "next/font/google";
 import QueryProvider from "./components/QueryProvider";
 import { ThemeProvider } from "./components/ThemeProvider";
 import "./globals.css";
 
-const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["300", "400", "500", "600", "700"] });
+const barlow = Barlow({ subsets: ["latin"], weight: ["400", "500", "600", "700"] });
 
 const themeScript = `
 (function() {
@@ -90,8 +90,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+    { media: "(prefers-color-scheme: light)", color: "#E9E4D8" },
+    { media: "(prefers-color-scheme: dark)", color: "#000000" },
   ],
   width: "device-width",
   initialScale: 1,
@@ -109,7 +109,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <script dangerouslySetInnerHTML={{ __html: swScript }} />
       </head>
-      <body className={`${jakarta.className} antialiased overscroll-none`}>
+      <body className={`${barlow.className} antialiased overscroll-none`}>
         <ThemeProvider>
           <QueryProvider>{children}</QueryProvider>
         </ThemeProvider>

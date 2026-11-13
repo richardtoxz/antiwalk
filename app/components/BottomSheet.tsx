@@ -408,9 +408,9 @@ export default function BottomSheet({
       ref={sheetRef}
       className={cn(
         "fixed z-10 bg-card/95 backdrop-blur-xl border-border/50 transition-shadow duration-300",
-        "md:left-4 md:bottom-4 md:right-auto md:w-[380px] md:max-h-[calc(100dvh-6rem)]",
-        "md:rounded-2xl md:border md:shadow-2xl",
-        "left-0 right-0 bottom-0 rounded-t-3xl border-t shadow-[0_-8px_30px_rgba(0,0,0,0.12)]",
+        "md:left-4 md:bottom-4 md:right-auto md:w-[380px] md:max-h-[calc(100dvh-9.5rem)]",
+        "md:rounded-xl md:border md:shadow-xl",
+        "left-0 right-0 bottom-0 rounded-t-2xl border-t shadow-[0_-8px_30px_rgba(0,0,0,0.16)]",
         isDragging ? "cursor-grabbing" : "",
         currentSnap === "full" && !isDesktop
           ? "shadow-[0_-16px_50px_rgba(0,0,0,0.2)]"
@@ -419,7 +419,7 @@ export default function BottomSheet({
       style={{
         height: sheetHeight,
         minHeight: isDesktop ? "auto" : "60px",
-        maxHeight: isDesktop ? "calc(100dvh - 6rem)" : "90dvh",
+        maxHeight: isDesktop ? "calc(100dvh - 9.5rem)" : "90dvh",
         transition: isDragging ? "none" : "height 0.3s cubic-bezier(0.32, 0.72, 0, 1)",
         willChange: "height",
       }}
@@ -501,7 +501,7 @@ export default function BottomSheet({
             {selectedLines.map((line) => {
               const routeData = activeBusRoutesData[line];
               const isFocused = focusedLine === line;
-              const color = routeData?.route.color ?? "#2563eb";
+              const color = routeData?.route.color ?? "#F5A300";
 
               return (
                 <button
@@ -586,7 +586,7 @@ export default function BottomSheet({
             <div className="rounded-xl border border-border bg-card p-4 shadow-sm relative overflow-hidden">
               <div
                 className="absolute left-0 top-0 bottom-0 w-1.5"
-                style={{ backgroundColor: currentRouteData?.route.color ?? "#2563eb" }}
+                style={{ backgroundColor: currentRouteData?.route.color ?? "#F5A300" }}
               />
               <div className="pl-2">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Linha ativa</p>
@@ -638,7 +638,7 @@ export default function BottomSheet({
                   <div className="grid grid-cols-2 gap-2">
                     {currentRouteData.directions.map((dir) => {
                       const isSelected = dir.directionId === currentDirectionId;
-                      const color = currentRouteData.route.color ?? "#2563eb";
+                      const color = currentRouteData.route.color ?? "#F5A300";
                       return (
                         <button
                           key={dir.directionId}
@@ -720,7 +720,7 @@ export default function BottomSheet({
                   {routeStops.map((stop, index) => {
                     const isFirst = index === 0;
                     const isLast = index === routeStops.length - 1;
-                    const color = currentRouteData?.route.color ?? "#2563eb";
+                    const color = currentRouteData?.route.color ?? "#F5A300";
                     return (
                       <div key={stop.stopId} className="relative flex items-start gap-2.5">
                         {/* Circle Bullet */}

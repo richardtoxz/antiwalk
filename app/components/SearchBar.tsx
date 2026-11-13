@@ -210,7 +210,7 @@ export default function SearchBar({
     <>
       <div
         className={cn(
-          "fixed inset-0 bg-foreground/20 backdrop-blur-sm z-20 transition-opacity duration-300",
+          "fixed inset-0 bg-foreground/20 backdrop-blur-sm z-20 transition-opacity duration-300 md:hidden",
           isExpanded ? "opacity-100" : "opacity-0 pointer-events-none"
         )}
         aria-hidden="true"
@@ -221,8 +221,8 @@ export default function SearchBar({
         className={cn(
           "fixed z-30 transition-all duration-300 ease-out",
           isExpanded
-            ? "inset-x-0 top-0 mx-0"
-            : "top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md"
+            ? "inset-x-0 top-0 mx-0 md:inset-x-auto md:left-4 md:top-4 md:w-[380px]"
+            : "top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md md:left-4 md:translate-x-0 md:w-[380px] md:max-w-none"
         )}
       >
         <div
