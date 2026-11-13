@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protótipo: ônibus 3D do DF</title>
+<style>
+  :root { color-scheme: light dark; --bg: #e9edf1; --panel: #ffffffee; --text: #14181d; --muted: #5b6672; --line: #d5dbe1; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14181d; --panel: #1d2329ee; --text: #eef1f4; --muted: #9aa5b1; --line: #2e363f; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+  .panel { position: fixed; left: 12px; right: 12px; bottom: 12px; max-width: 760px; margin: 0 auto; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(8px); display: grid; gap: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+  button[aria-pressed="true"] { border-color: var(--text); font-weight: 600; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #0003; }
+  input { min-height: 40px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; }
+  #line { width: 90px; } #dest { flex: 1; min-width: 160px; }
+  .label { color: var(--muted); }
+  #stopname { width: 150px; }
+  .hint { position: fixed; top: 12px; left: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="hint">Arraste para girar · role para aproximar</div>
+<div class="panel">
+  <div class="row" id="operators"></div>
+  <div class="row" id="stops"><span class="label">Parada:</span></div>
+  <div class="row">
+    <input id="line" value="0.110" aria-label="Linha">
+    <input id="dest" value="Rodoviária do Plano Piloto" aria-label="Destino">
+    <input id="stopname" value="W3 Sul 508" aria-label="Nome da parada">
+    <button id="spin" aria-pressed="true">Girar</button>
+    <button id="flush" aria-pressed="false">Vidro contínuo</button>
+    <button id="leftdoors" aria-pressed="false">Portas dos dois lados</button>
+    <button id="mapview" aria-pressed="false">Vista do mapa</button>
+  </div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js";
+import { OPERATORS, createBus } from "./bus-model.js";
+import { STOP_TYPES, createStop } from "./stop-model.js";
+
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(dark ? "#14181d" : "#e9edf1");
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 500);
+camera.position.set(13, 6.5, 15);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.4, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI / 2 - 0.02;
+
+scene.add(new THREE.HemisphereLight("#ffffff", dark ? "#30363d" : "#9aa3ad", 1.5));
+const sun = new THREE.DirectionalLight("#fff4e0", 2.4);
+sun.position.set(9, 16, 8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12 });
+scene.add(sun);
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(40, 64), new THREE.MeshStandardMaterial({ color: dark ? "#20262d" : "#cfd5db", roughness: 1 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const state = { operator: "marechal", spin: true, mapView: false, leftDoors: false, flush: false, stop: null };
+// "bus" is the rotating subject: the bus alone, or the bus parked at a stop.
+let bus = null;
+function rebuild() {
+  const angle = bus?.rotation.y ?? -0.5;
+  if (bus) {
+    scene.remove(bus);
+    bus.traverse(o => { o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose(); });
+  }
+  bus = new THREE.Group();
+  const vehicle = createBus({ operator: state.operator, line: document.getElementById("line").value || "0.110", destination: document.getElementById("dest").value || "", leftDoors: state.leftDoors, windows: state.flush ? "flush" : "framed" });
+  bus.add(vehicle);
+  if (state.stop) {
+    // The stop faces the street; the bus parks with its doors towards it.
+    const stop = createStop({ type: state.stop, name: document.getElementById("stopname").value || "Parada" });
+    stop.position.z = -3.0;
+    vehicle.rotation.y = Math.PI;
+    bus.add(stop);
+  }
+  bus.rotation.y = angle;
+  scene.add(bus);
+}
+
+const operatorsEl = document.getElementById("operators");
+for (const [key, op] of Object.entries(OPERATORS)) {
+  const button = document.createElement("button");
+  button.dataset.key = key;
+  button.innerHTML = `<span class="dot" style="background:${op.color}"></span>${op.name}`;
+  button.onclick = () => { state.operator = key; sync(); rebuild(); };
+  operatorsEl.append(button);
+}
+const stopsEl = document.getElementById("stops");
+for (const [key, label] of [[null, "Nenhuma"], ...Object.entries(STOP_TYPES).map(([k, v]) => [k, v.label])]) {
+  const button = document.createElement("button");
+  button.dataset.key = key ?? "";
+  button.textContent = label;
+  button.onclick = () => { state.stop = key; sync(); rebuild(); };
+  stopsEl.append(button);
+}
+function sync() {
+  stopsEl.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.key === (state.stop ?? ""))));
+  operatorsEl.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.key === state.operator)));
+  document.getElementById("spin").setAttribute("aria-pressed", String(state.spin));
+  document.getElementById("flush").setAttribute("aria-pressed", String(state.flush));
+  document.getElementById("leftdoors").setAttribute("aria-pressed", String(state.leftDoors));
+  document.getElementById("mapview").setAttribute("aria-pressed", String(state.mapView));
+}
+document.getElementById("spin").onclick = () => { state.spin = !state.spin; sync(); };
+document.getElementById("flush").onclick = () => { state.flush = !state.flush; sync(); rebuild(); };
+document.getElementById("leftdoors").onclick = () => { state.leftDoors = !state.leftDoors; sync(); rebuild(); };
+document.getElementById("mapview").onclick = () => {
+  state.mapView = !state.mapView;
+  // Roughly how the bus is seen on a tilted map at street zoom.
+  camera.position.set(...(state.mapView ? [0, 70, 55] : [13, 6.5, 15]));
+  sync();
+};
+for (const id of ["line", "dest", "stopname"]) document.getElementById(id).oninput = rebuild;
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize);
+resize(); sync(); rebuild();
+window.__bus = { state, rebuild, sync, camera, controls, get bus() { return bus; } };
+
+renderer.setAnimationLoop(() => {
+  if (state.spin && bus) bus.rotation.y += 0.004;
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
