@@ -1,9 +1,11 @@
-import Map from "./components/Map";
+import TransitShell from "./components/TransitShell";
+
+export const metadata = {
+  title: "Transporte DF - Encontre linhas e estações",
+  description:
+    "Aplicativo de transporte público do Distrito Federal. Encontre linhas de ônibus, estações de metrô e planeje suas rotas.",
+};
 
 export default function Home() {
-  return (
-    <main className="w-full h-screen overflow-hidden">
-      <Map />
-    </main>
-  );
+  return <TransitShell />;
 }
