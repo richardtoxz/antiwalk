@@ -95,6 +95,8 @@ interface BottomSheetProps {
   activeBusRoutesData: Record<string, BusRouteDetailsResponse>;
   busVehicles: BusVehicle[];
   onSelectResult: (result: SearchSelection) => void;
+  isRealtimeFallback?: boolean;
+  hasCachedRoutes?: boolean;
 }
 
 function getSnapPointFromHeight(heightPercent: number): SnapPoint {
@@ -203,6 +205,8 @@ export default function BottomSheet({
   activeBusRoutesData,
   busVehicles,
   onSelectResult,
+  isRealtimeFallback = false,
+  hasCachedRoutes = false,
 }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint>("peek");
@@ -631,6 +635,12 @@ export default function BottomSheet({
               <span className="font-medium">{freshCount > 0 ? `${freshCount} ônibus ao vivo` : dataLabels[busDataQuality]}</span>
               <span className="text-muted-foreground">{formatTimeAgo(busLastUpdate, now)}</span>
             </p>
+            {isRealtimeFallback && (
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">Conexão ao vivo interrompida. Consultando as posições a cada 15 segundos.</p>
+            )}
+            {hasCachedRoutes && (
+              <p className="mt-1 text-xs text-muted-foreground">Itinerário salvo no aparelho. A atualização ainda não foi confirmada.</p>
+            )}
             {freshCount > 0 && ['mixed', 'stale', 'expired', 'unknown', 'unavailable'].includes(busDataQuality) && (
               <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                 {dataLabels[busDataQuality]}. Posições antigas não confirmam a chegada do ônibus.

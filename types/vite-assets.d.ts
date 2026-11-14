@@ -3,3 +3,12 @@ declare module "*?worker&url" {
   const url: string;
   export default url;
 }
+
+declare module "*?url" {
+  const url: string;
+  export default url;
+}
+
+interface ImportMeta {
+  readonly env: { readonly DEV: boolean; readonly PROD: boolean; readonly [key: string]: string | boolean | undefined };
+}

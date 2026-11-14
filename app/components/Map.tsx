@@ -5,7 +5,12 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre 6 looks for its worker next to its own module file, which no longer
 // holds once the bundler moves that file. Bundle the worker and point to it.
-import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import bundledWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import rawWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
+
+// In development Vite injects its reload client into bundled workers, and that client
+// needs a document, which workers lack. The raw module works there; builds use the bundle.
+const maplibreWorkerUrl = import.meta.env.DEV ? rawWorkerUrl : bundledWorkerUrl;
 import { Protocol } from "pmtiles";
 import { buildMapStyle } from "@/lib/map/style";
 import { useTheme } from "./ThemeProvider";

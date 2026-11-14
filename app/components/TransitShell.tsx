@@ -204,6 +204,8 @@ export default function TransitShell() {
   const visible = usePageVisible();
   const now = useVisibleClock();
   const [plannerOpen, setPlannerOpen] = useState(false);
+  const [plannerMounted, setPlannerMounted] = useState(false);
+  if (plannerOpen && !plannerMounted) setPlannerMounted(true);
   const [origin, setOrigin] = useState<Place | null>(null);
   const [destination, setDestination] = useState<Place | null>(null);
   const [picking, setPicking] = useState<'origin' | 'destination' | null>(null);
@@ -1205,33 +1207,10 @@ export default function TransitShell() {
           <button type="button" onClick={() => setJourney(null)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-accent">Limpar</button>
         </div>
       </div>}
-      {plannerOpen && <Suspense fallback={<div className="fixed inset-0 z-40 flex items-center justify-center bg-card text-sm text-muted-foreground md:inset-auto md:bottom-4 md:left-4 md:top-4 md:w-[380px] md:rounded-xl md:border md:border-border">Abrindo…</div>}>
+      {plannerMounted && <div className={plannerOpen ? undefined : 'hidden'}><Suspense fallback={<div className="fixed inset-0 z-40 flex items-center justify-center bg-card text-sm text-muted-foreground md:inset-auto md:bottom-4 md:left-4 md:top-4 md:w-[380px] md:rounded-xl md:border md:border-border">Abrindo…</div>}>
         <JourneyPanel origin={origin} destination={destination} onOrigin={setOrigin} onDestination={setDestination} onClose={closePlanner} onSelect={selectJourney}
           onPick={field => { setPicking(field); setPlannerOpen(false); }} />
-      </Suspense>}
-
-      {/* Floating Status Badges */}
-      {(isSseFallback || Object.values(staleRoutes).some((v) => v)) && selectedLines.length > 0 && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-20 flex flex-col gap-2 w-[calc(100%-2rem)] max-w-md pointer-events-none transition-all duration-300 ${selectedLines.length > 0 ? "top-[7.5rem]" : "top-20"}`}>
-          {isSseFallback && (
-            <div className="flex items-center gap-2 bg-amber-500/15 backdrop-blur-md border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-sm w-full transition-all duration-300">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-              </span>
-              <span>Reconectando. Consultando posições a cada 15s.</span>
-            </div>
-          )}
-          {Object.values(staleRoutes).some((v) => v) && (
-            <div className="flex items-center gap-2 bg-card/90 backdrop-blur-md border border-border text-foreground text-xs font-semibold px-3 py-2 rounded-lg shadow-sm w-full transition-all duration-300">
-              <span className="relative flex h-2 w-2">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-foreground"></span>
-              </span>
-              <span>Itinerário salvo. A confirmação de atualização ainda está pendente.</span>
-            </div>
-          )}
-        </div>
-      )}
+      </Suspense></div>}
 
       <div id="bottom-sheet">
         <BottomSheet
@@ -1265,6 +1244,8 @@ export default function TransitShell() {
           activeBusRoutesData={activeBusRoutesData}
           busVehicles={filteredBusVehicles}
           onSelectResult={handleResultSelect}
+          isRealtimeFallback={isSseFallback}
+          hasCachedRoutes={Object.values(staleRoutes).some(Boolean)}
         />
       </div>
     </main>
