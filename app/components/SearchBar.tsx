@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Bus,
-  Clock,
+  MapPin,
   Route,
   Search,
   TrainFront,
@@ -12,7 +13,29 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MetroStationsResponse, SearchSelection } from "@/lib/transport/types";
+import { getPlaces, type Place } from "@/lib/transport/journeys";
 import ThemeToggle from "./ThemeToggle";
+
+function ResultRow({ icon, title, subtitle, trailing, onClick }: {
+  icon: ReactNode; title: string; subtitle: string; trailing?: string; onClick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex min-h-12 w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">{icon}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{title}</span>
+          <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
+        </span>
+        {trailing && <span className="shrink-0 rounded-full border border-border px-2.5 py-1 text-xs font-semibold">{trailing}</span>}
+      </button>
+    </li>
+  );
+}
 
 const RECENTS_STORAGE_KEY = "transporte-df-recent-searches";
 const MAX_RESULTS = 20;
@@ -91,6 +114,7 @@ interface SearchBarProps {
   isLoading?: boolean;
   onSelectResult: (result: SearchSelection) => void;
   onPlanRoute?: () => void;
+  onGoTo?: (place: Place) => void;
 }
 
 export default function SearchBar({
@@ -99,6 +123,7 @@ export default function SearchBar({
   isLoading = false,
   onSelectResult,
   onPlanRoute,
+  onGoTo,
 }: SearchBarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [query, setQuery] = useState("");
@@ -172,6 +197,40 @@ export default function SearchBar({
       handleCollapse();
     },
     [handleCollapse, onSelectResult]
+  );
+
+  const trimmedQuery = query.trim();
+  const lineResults = filteredResults.filter((item) => item.type === "line").slice(0, 6);
+  const stationResults = filteredResults.filter((item) => item.type === "station").slice(0, 4);
+
+  // Places come from the server and cost quota, so wait for typing to settle.
+  const [placeTerm, setPlaceTerm] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPlaceTerm(trimmedQuery), 500);
+    return () => window.clearTimeout(timer);
+  }, [trimmedQuery]);
+  const placesQuery = useQuery({
+    queryKey: ["journey", "places", placeTerm],
+    queryFn: ({ signal }) => getPlaces(placeTerm, signal),
+    enabled: isExpanded && placeTerm.length >= 3 && placeTerm.length <= 100,
+    staleTime: 300000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const placesPending = placeTerm !== trimmedQuery || placesQuery.isFetching;
+  // Keep room for addresses: the server lists stops first and they would fill the list.
+  const allPlaces = placesQuery.data?.places ?? [];
+  const places = [
+    ...allPlaces.filter((place) => place.kind !== "address").slice(0, 4),
+    ...allPlaces.filter((place) => place.kind === "address").slice(0, 3),
+  ];
+
+  const handleGoTo = useCallback(
+    (place: Place) => {
+      onGoTo?.(place);
+      handleCollapse();
+    },
+    [handleCollapse, onGoTo]
   );
 
   const handleSearch = useCallback((searchQuery: string) => {
@@ -300,114 +359,104 @@ export default function SearchBar({
             role="listbox"
             className={cn(
               "overflow-hidden transition-all duration-300 ease-out",
-              isExpanded && (filteredResults.length > 0 || isFocused)
+              isExpanded && (trimmedQuery.length > 0 || isFocused)
                 ? "max-h-[60vh] opacity-100"
                 : "max-h-0 opacity-0"
             )}
           >
-            <div className="border-t border-border/50">
-              {query.length > 0 && isLoading ? (
-                <div className="py-8 px-4 text-center">
-                  <p className="text-muted-foreground">Carregando dados...</p>
-                </div>
-              ) : filteredResults.length > 0 ? (
-                <ul className="py-2 px-2">
-                  {filteredResults.map((result, index) => (
-                    <li key={result.id}>
-                      <button
-                        onClick={() => handleResultClick(result)}
-                        className={cn(
-                          "w-full flex items-center gap-3 p-3 rounded-lg text-left",
-                          "hover:bg-accent transition-colors duration-150",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                        )}
-                        role="option"
-                        aria-selected={false}
-                        style={{
-                          animationDelay: `${index * 50}ms`,
-                        }}
-                      >
-                        <div
-                          className={cn(
-                            "flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center",
-                            result.type === "line"
-                              ? "bg-primary/10 text-primary"
-                              : "bg-cta/10 text-cta"
-                          )}
-                        >
-                          {result.type === "line" ? (
-                            <Bus className="w-5 h-5" />
-                          ) : (
-                            <TrainFront className="w-5 h-5" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-foreground truncate">
-                            {result.title}
-                          </p>
-                          <p className="text-sm text-muted-foreground truncate">
-                            {result.subtitle}
-                          </p>
-                        </div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : query.length > 0 ? (
-                <div className="py-8 px-4 text-center">
-                  <p className="text-muted-foreground">
-                    Nenhum resultado encontrado
-                  </p>
-                </div>
-              ) : (
-                <div className="py-4 px-4">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 px-1">
-                    Buscas recentes
-                  </p>
+            <div className="max-h-[60vh] overflow-y-auto border-t border-border px-2 py-2">
+              {trimmedQuery.length === 0 ? (
+                <section aria-label="Buscas recentes">
+                  <h3 className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">Recentes</h3>
                   {recentSearches.length === 0 ? (
-                    <p className="px-3 pb-2 text-sm text-muted-foreground">
-                      Nenhuma busca recente ainda.
+                    <p className="px-2 pb-2 text-sm text-muted-foreground">
+                      Busque uma linha, uma estação ou um lugar para onde você quer ir.
                     </p>
                   ) : (
                     <ul>
                       {recentSearches.map((result) => (
-                      <li key={result.id}>
-                        <button
+                        <ResultRow
+                          key={result.id}
+                          icon={result.type === "line" ? <Bus className="h-4 w-4" aria-hidden /> : <TrainFront className="h-4 w-4" aria-hidden />}
+                          title={result.title}
+                          subtitle={result.subtitle}
                           onClick={() => handleResultClick(result)}
-                          className={cn(
-                            "w-full flex items-center gap-3 p-3 rounded-lg text-left",
-                            "hover:bg-accent transition-colors duration-150",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                          )}
-                        >
-                          <div
-                            className={cn(
-                              "flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center",
-                              result.type === "line"
-                                ? "bg-primary/10 text-primary"
-                                : "bg-cta/10 text-cta"
-                            )}
-                          >
-                            {result.type === "line" ? (
-                              <Bus className="w-5 h-5" />
-                            ) : (
-                              <Clock className="w-5 h-5" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-foreground truncate">
-                              {result.title}
-                            </p>
-                            <p className="text-sm text-muted-foreground truncate">
-                              {result.subtitle}
-                            </p>
-                          </div>
-                        </button>
-                      </li>
-                    ))}
+                        />
+                      ))}
                     </ul>
                   )}
-                </div>
+                </section>
+              ) : (
+                <>
+                  {isLoading && <p className="px-2 py-2 text-sm text-muted-foreground">Carregando linhas e estações…</p>}
+
+                  {lineResults.length > 0 && (
+                    <section aria-label="Linhas">
+                      <h3 className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">Linhas</h3>
+                      <ul>
+                        {lineResults.map((result) => (
+                          <ResultRow
+                            key={result.id}
+                            icon={<Bus className="h-4 w-4" aria-hidden />}
+                            title={result.title}
+                            subtitle={result.subtitle}
+                            onClick={() => handleResultClick(result)}
+                          />
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+
+                  {stationResults.length > 0 && (
+                    <section aria-label="Estações do metrô">
+                      <h3 className="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">Estações do metrô</h3>
+                      <ul>
+                        {stationResults.map((result) => (
+                          <ResultRow
+                            key={result.id}
+                            icon={<TrainFront className="h-4 w-4" aria-hidden />}
+                            title={result.title}
+                            subtitle={result.subtitle}
+                            onClick={() => handleResultClick(result)}
+                          />
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+
+                  {placeTerm.length >= 3 && (
+                    <section aria-label="Lugares e paradas">
+                      <h3 className="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">Lugares e paradas</h3>
+                      {placesPending && <p role="status" className="px-2 py-2 text-sm text-muted-foreground">Buscando lugares…</p>}
+                      {!placesPending && placesQuery.error && (
+                        <p role="status" className="px-2 py-2 text-sm text-muted-foreground">A busca de lugares está indisponível agora.</p>
+                      )}
+                      {!placesPending && places.length > 0 && (
+                        <ul>
+                          {places.map((place, index) => (
+                            <ResultRow
+                              key={place.id ?? `${place.lat}:${place.lng}:${index}`}
+                              icon={place.kind === "metro" ? <TrainFront className="h-4 w-4" aria-hidden /> : <MapPin className="h-4 w-4" aria-hidden />}
+                              title={place.name}
+                              subtitle={place.kind === "metro" ? "Estação de metrô" : place.kind === "bus" ? "Parada de ônibus" : "Endereço"}
+                              trailing="Ir"
+                              onClick={() => handleGoTo(place)}
+                            />
+                          ))}
+                        </ul>
+                      )}
+                      {!placesPending && !placesQuery.error && places.length === 0 && (
+                        <p className="px-2 py-2 text-sm text-muted-foreground">Nenhum lugar encontrado com esse nome.</p>
+                      )}
+                    </section>
+                  )}
+
+                  {!isLoading && lineResults.length === 0 && stationResults.length === 0 && placeTerm.length < 3 && (
+                    <p className="px-2 py-2 text-sm text-muted-foreground">
+                      Nenhuma linha ou estação com esse nome. Digite pelo menos três letras para buscar lugares.
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </div>

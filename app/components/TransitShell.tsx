@@ -1193,6 +1193,7 @@ export default function TransitShell() {
         isLoading={linesQuery.isLoading || stationsQuery.isLoading}
         onSelectResult={handleResultSelect}
         onPlanRoute={() => setPlannerOpen(true)}
+        onGoTo={(place) => { setDestination(place); setPlannerOpen(true); }}
       />
 
       {picking && <div className="absolute left-4 right-4 top-44 z-30 flex items-center justify-between gap-2 rounded-xl bg-card p-3 shadow-lg"><p className="text-sm">Toque no mapa para escolher {picking === 'origin' ? 'a origem' : 'o destino'}.</p><button type="button" className="h-11 w-11" aria-label="Cancelar seleção no mapa" onClick={() => { setPicking(null); setPlannerOpen(true); }}><X /></button></div>}
