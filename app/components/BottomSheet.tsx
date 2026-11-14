@@ -15,9 +15,12 @@ import {
   ChevronDown,
   Loader2,
   Radio,
+  Share2,
+  Star,
   TrainFront,
   X,
 } from "lucide-react";
+import { lineSelection, stationSelection } from "@/lib/navigation/favorites";
 import { cn } from "@/lib/utils";
 import ArrivalPanel from './ArrivalPanel';
 import { positionQuality } from '@/lib/transport/quality';
@@ -100,6 +103,9 @@ interface BottomSheetProps {
   busMode?: "auto" | "light" | "full";
   onBusModeChange?: (mode: "auto" | "light" | "full") => void;
   uses3D?: boolean;
+  favorites?: SearchSelection[];
+  onToggleFavorite?: (item: SearchSelection) => void;
+  onShare?: () => Promise<"shared" | "copied" | "failed">;
 }
 
 function getSnapPointFromHeight(heightPercent: number): SnapPoint {
@@ -213,7 +219,38 @@ export default function BottomSheet({
   busMode = "auto",
   onBusModeChange,
   uses3D = false,
+  favorites = [],
+  onToggleFavorite,
+  onShare,
 }: BottomSheetProps) {
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const share = async () => {
+    if (!onShare) return;
+    const result = await onShare();
+    setShareStatus(result === "copied" ? "Link copiado" : result === "failed" ? "Não foi possível copiar o link" : null);
+    if (result !== "shared") window.setTimeout(() => setShareStatus(null), 2500);
+  };
+  const isFavorite = (id: string) => favorites.some((f) => f.id === id);
+  const viewActions = (item: SearchSelection) => (
+    <div className="flex shrink-0 items-center">
+      {onToggleFavorite && (
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(item)}
+          aria-pressed={isFavorite(item.id)}
+          aria-label={isFavorite(item.id) ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+          className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-accent"
+        >
+          <Star className={cn("h-5 w-5", isFavorite(item.id) && "fill-current text-amber-600 dark:text-cta")} aria-hidden />
+        </button>
+      )}
+      {onShare && (
+        <button type="button" onClick={share} aria-label="Compartilhar" className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-accent">
+          <Share2 className="h-5 w-5" aria-hidden />
+        </button>
+      )}
+    </div>
+  );
   const sheetRef = useRef<HTMLDivElement>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint>("peek");
   const [isDragging, setIsDragging] = useState(false);
@@ -560,6 +597,25 @@ export default function BottomSheet({
               Busque uma linha ou estação no campo acima, ou trace uma rota entre dois lugares.
             </p>
 
+            {favorites.length > 0 && (
+              <section className="mt-5" aria-label="Favoritos">
+                <h3 className="text-xs font-medium text-muted-foreground">Favoritos</h3>
+                <ul className="mt-1 divide-y divide-border">
+                  {favorites.map((item) => (
+                    <li key={item.id}>
+                      <button type="button" onClick={() => onSelectResult(item)} className="flex min-h-12 w-full items-center gap-3 text-left">
+                        <Star className="h-4 w-4 shrink-0 fill-current text-amber-600 dark:text-cta" aria-hidden />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{item.title}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{item.subtitle}</span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             {recents.length > 0 && (
               <section className="mt-5" aria-label="Buscas recentes">
                 <h3 className="text-xs font-medium text-muted-foreground">Recentes</h3>
@@ -644,7 +700,9 @@ export default function BottomSheet({
                   <p className="text-xs text-muted-foreground">Tarifa R$ {currentRouteData.route.price.toFixed(2).replace(".", ",")}</p>
                 ) : null}
               </div>
+              {viewActions(lineSelection(focusedLine, currentRouteData?.route.longName))}
             </div>
+            {shareStatus && <p role="status" className="mt-2 text-xs text-muted-foreground">{shareStatus}</p>}
 
             {currentRouteData && currentRouteData.directions.length > 1 && (() => {
               const current = currentRouteData.directions.find((d) => d.directionId === currentDirectionId) ?? currentRouteData.directions[0];
@@ -753,7 +811,9 @@ export default function BottomSheet({
                 <p className="text-xs text-muted-foreground">Linha {selectedStation?.linha ?? "indisponível"}</p>
                 <p className="text-xs text-muted-foreground">{formatMetroOperation(metroStatus)}</p>
               </div>
+              {selectedStationCode && viewActions(stationSelection(selectedStationCode, selectedStation?.nome, selectedStation?.linha))}
             </div>
+            {shareStatus && <p role="status" className="mt-2 text-xs text-muted-foreground">{shareStatus}</p>}
 
             {selectedStation && (
               <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Plataformas">

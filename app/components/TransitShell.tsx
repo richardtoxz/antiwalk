@@ -7,6 +7,8 @@ import { busIconId } from "@/lib/map/bus-icon";
 import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pointAlong, type LngLat } from "@/lib/map/vehicle-motion";
 import { markSlow3D, readBusRenderMode, resolveUses3D, writeBusRenderMode, type BusRenderMode } from "@/lib/map/render-mode";
 import type { Transit3DLayer, Vehicle3D } from "@/lib/map/transit-3d-layer";
+import { readLinkTarget, writeLinkTarget } from "@/lib/navigation/share-link";
+import { lineSelection, readFavorites, readFavoritesOnServer, stationSelection, subscribeFavorites, toggleFavorite } from "@/lib/navigation/favorites";
 
 const TRANSIT_3D_LAYER_ID = "transit-3d-layer";
 const BUS_MODE_EVENT = "antiwalk-bus-mode";
@@ -1258,6 +1260,49 @@ export default function TransitShell() {
     });
   }, [selectedLines]);
 
+  // Open what a shared link points to, once.
+  const linkApplied = useRef(false);
+  useEffect(() => {
+    if (linkApplied.current) return;
+    linkApplied.current = true;
+    const target = readLinkTarget(window.location.search);
+    if (target.line) {
+      handleResultSelect(lineSelection(target.line));
+      if (target.direction !== undefined) setLineDirections((prev) => ({ ...prev, [target.line!]: target.direction! }));
+    } else if (target.station) {
+      handleResultSelect(stationSelection(target.station));
+    }
+  }, [handleResultSelect]);
+
+  // Keep the address in step with the view, so it can be bookmarked or shared.
+  useEffect(() => {
+    if (!linkApplied.current) return;
+    const query = writeLinkTarget(focusedLine
+      ? { line: focusedLine, direction: lineDirections[focusedLine] ?? 0 }
+      : { station: selectedStationCode ?? undefined });
+    const next = `${window.location.pathname}${query}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, "", next);
+  }, [focusedLine, selectedStationCode, lineDirections]);
+
+  const favorites = useSyncExternalStore(subscribeFavorites, readFavorites, readFavoritesOnServer);
+
+  const shareCurrentView = useCallback(async (): Promise<"shared" | "copied" | "failed"> => {
+    const url = window.location.href;
+    const title = document.title;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        return "shared";
+      }
+      await navigator.clipboard.writeText(url);
+      return "copied";
+    } catch (error) {
+      // Closing the share sheet is not a failure.
+      if (error instanceof DOMException && error.name === "AbortError") return "shared";
+      return "failed";
+    }
+  }, []);
+
   const metroError = useMemo(() => {
     if (!selectedStationCode) {
       return null;
@@ -1393,6 +1438,9 @@ export default function TransitShell() {
           busMode={busMode}
           onBusModeChange={changeBusMode}
           uses3D={use3D}
+          favorites={favorites}
+          onToggleFavorite={toggleFavorite}
+          onShare={shareCurrentView}
           hasCachedRoutes={Object.values(staleRoutes).some(Boolean)}
         />
       </div>
