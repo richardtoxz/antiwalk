@@ -1150,7 +1150,7 @@ export default function TransitShell() {
       }));
       upsertGeoJsonSource(mapInstance, 'journey-source', { type: 'FeatureCollection', features });
       if (!mapInstance.getLayer('journey-layer')) mapInstance.addLayer({ id: 'journey-layer', type: 'line', source: 'journey-source',
-        paint: { 'line-width': 5, 'line-opacity': 0.75, 'line-color': ['match', ['get', 'mode'], 'walk', '#64748b', 'metro', '#16a34a', '#2563eb'] } });
+        paint: { 'line-width': 5, 'line-opacity': 0.9, 'line-color': ['match', ['get', 'mode'], 'walk', '#8C8273', 'metro', '#16a34a', '#F5A300'] } });
     };
     draw(); mapInstance.on('style.load', draw);
     return () => { mapInstance.off('style.load', draw); mapInstance.off('idle', draw); if (mapInstance.getLayer('journey-layer')) mapInstance.removeLayer('journey-layer'); if (mapInstance.getSource('journey-source')) mapInstance.removeSource('journey-source'); };
@@ -1196,12 +1196,16 @@ export default function TransitShell() {
         onGoTo={(place) => { setDestination(place); setPlannerOpen(true); }}
       />
 
-      {picking && <div className="absolute left-4 right-4 top-44 z-30 flex items-center justify-between gap-2 rounded-xl bg-card p-3 shadow-lg"><p className="text-sm">Toque no mapa para escolher {picking === 'origin' ? 'a origem' : 'o destino'}.</p><button type="button" className="h-11 w-11" aria-label="Cancelar seleção no mapa" onClick={() => { setPicking(null); setPlannerOpen(true); }}><X /></button></div>}
-      {journey && !picking && <div className="absolute right-4 top-48 z-20 max-w-[220px] rounded-xl bg-card p-3 text-xs shadow-lg"><p className="font-semibold">Percurso de cerca de {journey.durationMinutes} min</p>
-        <p className="mt-1 text-muted-foreground">{journey.legs.some(l => l.mode === 'walk' && l.walkingRoute !== 'geoapify') ? 'Há caminhadas aproximadas. Confira os acessos a pé.' : 'Tempos estimados. Traçados do transporte aproximados.'}</p>
-        {journey.legs.some(l => l.walkingRoute === 'geoapify') && <p className="mt-2 text-muted-foreground">Caminhos a pé: <a className="underline" href="https://www.geoapify.com/" target="_blank" rel="noopener noreferrer">Geoapify</a> / <a className="underline" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></p>}
-        <button type="button" onClick={() => setJourney(null)} className="mt-1 min-h-11 text-primary">Limpar percurso</button></div>}
-      {plannerOpen && <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-background">Abrindo planejamento…</div>}>
+      {picking && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 flex items-center justify-between gap-2"><p className="text-sm">Toque no mapa para escolher {picking === 'origin' ? 'a origem' : 'o destino'}.</p><button type="button" className="h-11 w-11" aria-label="Cancelar seleção no mapa" onClick={() => { setPicking(null); setPlannerOpen(true); }}><X /></button></div>}
+      {journey && !picking && !plannerOpen && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 text-sm" role="status">
+        <p className="font-semibold">Percurso de cerca de {journey.durationMinutes} min</p>
+        <p className="mt-1 text-xs text-muted-foreground">{journey.legs.some(l => l.mode === 'walk' && l.walkingRoute !== 'geoapify') ? 'Há caminhadas aproximadas. Confira os acessos a pé.' : 'Tempos estimados. Os traçados do transporte são aproximados.'}</p>
+        <div className="mt-2 flex gap-2">
+          <button type="button" onClick={() => setPlannerOpen(true)} className="min-h-11 flex-1 rounded-lg border border-foreground px-3 text-sm font-semibold hover:bg-accent">Outras opções</button>
+          <button type="button" onClick={() => setJourney(null)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-accent">Limpar</button>
+        </div>
+      </div>}
+      {plannerOpen && <Suspense fallback={<div className="fixed inset-0 z-40 flex items-center justify-center bg-card text-sm text-muted-foreground md:inset-auto md:bottom-4 md:left-4 md:top-4 md:w-[380px] md:rounded-xl md:border md:border-border">Abrindo…</div>}>
         <JourneyPanel origin={origin} destination={destination} onOrigin={setOrigin} onDestination={setDestination} onClose={closePlanner} onSelect={selectJourney}
           onPick={field => { setPicking(field); setPlannerOpen(false); }} />
       </Suspense>}
