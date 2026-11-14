@@ -1,7 +1,9 @@
 "use client";
 
 import { useQueryClient, useQueries } from "@tanstack/react-query";
-import maplibregl, { type GeoJSONSource } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import type { GeoJSONSource } from "maplibre-gl";
+import type * as GeoJSON from "geojson";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Route, X } from 'lucide-react';
 import { positionQuality, positionAgeLabel } from '@/lib/transport/quality';
@@ -15,7 +17,6 @@ import { getLineRoutes } from "@/lib/transport/bus";
 import {
   getErrorMessage,
   useBusLinesQuery,
-  useLineRoutesQuery,
   useMetroScheduleQuery,
   useMetroStationsQuery,
   useMetroTrainsQuery,
@@ -24,9 +25,7 @@ import {
 } from "@/lib/transport/hooks";
 import { transportSocketClient } from "@/lib/transport/websocket";
 import type {
-  BusRealtimeMessage,
   BusRouteDetailsResponse,
-  BusStop,
   BusVehicle,
   MetroRealtimeMode,
   SearchSelection,
@@ -57,19 +56,6 @@ function vehiclePopup(vehicle: BusVehicle & { lineShortName: string }, now: numb
   const delay = vehicle.delayMinutes;
   const status = delay == null ? 'Atraso não informado' : delay > 0 ? `${delay} min de atraso` : delay < 0 ? `${Math.abs(delay)} min adiantado` : 'No horário informado';
   return `<div class="p-2 text-xs"><strong>Linha ${escapeHtml(vehicle.lineShortName)}</strong><div>Veículo: ${escapeHtml(vehicle.vehicleId)}</div><div>${escapeHtml(status)}</div><div>${escapeHtml(positionAgeLabel(vehicle, now))}</div>${positionQuality(vehicle, now) !== 'fresh' ? '<div>Posição sem confirmação recente.</div>' : ''}</div>`;
-}
-
-function isBusRealtimeMessage(payload: unknown): payload is BusRealtimeMessage {
-  if (!payload || typeof payload !== "object") {
-    return false;
-  }
-
-  const candidate = payload as Partial<BusRealtimeMessage>;
-  return (
-    typeof candidate.topic === "string" &&
-    Boolean(candidate.data) &&
-    Array.isArray(candidate.data?.vehicles)
-  );
 }
 
 function latLngToLngLat(lat: number, lng: number): [number, number] {
@@ -201,47 +187,6 @@ function upsertGeoJsonSource(
   map.addSource(sourceId, {
     type: "geojson",
     data,
-  });
-}
-
-function removeLayerIfExists(map: maplibregl.Map, layerId: string): void {
-  if (map.getLayer(layerId)) {
-    map.removeLayer(layerId);
-  }
-}
-
-function removeSourceIfExists(map: maplibregl.Map, sourceId: string): void {
-  if (map.getSource(sourceId)) {
-    map.removeSource(sourceId);
-  }
-}
-
-function fitMapToRoute(
-  map: maplibregl.Map,
-  routeData: GeoJSON.FeatureCollection<GeoJSON.LineString>
-): void {
-  const coordinates = routeData.features.flatMap((feature) => feature.geometry.coordinates);
-  if (coordinates.length === 0) {
-    return;
-  }
-
-  const bounds = coordinates.reduce(
-    (acc, coord) => acc.extend(coord as [number, number]),
-    new maplibregl.LngLatBounds(
-      coordinates[0] as [number, number],
-      coordinates[0] as [number, number]
-    )
-  );
-
-  map.fitBounds(bounds, {
-    padding: {
-      top: 100,
-      right: 80,
-      bottom: 180,
-      left: 80,
-    },
-    maxZoom: 14,
-    duration: 700,
   });
 }
 
@@ -557,9 +502,10 @@ export default function TransitShell() {
   // Global Metrô train positions real-time updater
   useEffect(() => {
     if (!visible) return;
-    const handleGlobalMetroTrains = (payload: any) => {
-      if (payload && Array.isArray(payload.data)) {
-        setAllMetroTrains(normalizeMetroRealtime(payload.data));
+    const handleGlobalMetroTrains = (payload: unknown) => {
+      const data = (payload as { data?: unknown } | null)?.data;
+      if (Array.isArray(data)) {
+        setAllMetroTrains(normalizeMetroRealtime(data));
       }
     };
 
@@ -588,11 +534,12 @@ export default function TransitShell() {
 
     scheduleFallbackToPolling(15000);
 
-    const handleMetroRealtimeSignal = (payload: any) => {
+    const handleMetroRealtimeSignal = (payload: unknown) => {
       setMetroRealtimeMode("ws");
       scheduleFallbackToPolling(25000);
-      if (payload && Array.isArray(payload.data)) {
-        setAllMetroTrains(normalizeMetroRealtime(payload.data));
+      const data = (payload as { data?: unknown } | null)?.data;
+      if (Array.isArray(data)) {
+        setAllMetroTrains(normalizeMetroRealtime(data));
       }
       queryClient.invalidateQueries({
         queryKey: ["metro", "trains", selectedStationCode, selectedPlatform],
@@ -1025,7 +972,7 @@ export default function TransitShell() {
     if (!mapInstance) return;
 
     // Station clicks select them in the UI
-    const handleStationClick = (e: any) => {
+    const handleStationClick = (e: maplibregl.MapLayerMouseEvent) => {
       if (picking) return;
       const feature = e.features?.[0];
       if (feature) {
@@ -1037,7 +984,7 @@ export default function TransitShell() {
     };
 
     // Bus stop click shows stop name popup
-    const handleStopClick = (e: any) => {
+    const handleStopClick = (e: maplibregl.MapLayerMouseEvent) => {
       if (picking) return;
       const feature = e.features?.[0];
       if (feature) {
@@ -1052,7 +999,7 @@ export default function TransitShell() {
     };
 
     // Bus vehicle click shows details popup
-    const handleBusVehicleClick = (e: any) => {
+    const handleBusVehicleClick = (e: maplibregl.MapLayerMouseEvent) => {
       if (picking) return;
       const feature = e.features?.[0];
       if (feature) {
@@ -1067,7 +1014,7 @@ export default function TransitShell() {
     };
 
     // Metro train click shows train details popup
-    const handleMetroTrainClick = (e: any) => {
+    const handleMetroTrainClick = (e: maplibregl.MapLayerMouseEvent) => {
       if (picking) return;
       const feature = e.features?.[0];
       if (feature) {

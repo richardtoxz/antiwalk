@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+// MapLibre 6 looks for its worker next to its own module file, which no longer
+// holds once the bundler moves that file. Bundle the worker and point to it.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useTheme } from "./ThemeProvider";
 
 interface MapProps {
@@ -32,7 +35,7 @@ export default function Map({ onMapReady }: MapProps) {
     const initialStyle = getMapStyle(themeRef.current);
     currentStyleRef.current = initialStyle;
 
-    console.log("[Map] Creating MapLibre instance with theme:", resolvedTheme);
+    maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,

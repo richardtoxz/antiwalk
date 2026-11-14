@@ -35,7 +35,7 @@ test('mensagens reais de plataformas do metrô são normalizadas antes de desenh
 test('o cache offline não intercepta conexões ao vivo ou módulos de desenvolvimento', async () => {
   const handlers = new Map();
   const source = await fs.readFile(new URL('../public/sw.js',import.meta.url),'utf8');
-  vm.runInNewContext(source,{URL, self:{location:{origin:'http://localhost:3001'},addEventListener:(type: string,fn: Function)=>handlers.set(type,fn)}});
+  vm.runInNewContext(source,{URL, self:{location:{origin:'http://localhost:3001'},addEventListener:(type: string,fn: (event: unknown) => void)=>handlers.set(type,fn)}});
   for(const url of ['http://localhost:3000/api/monitor/sse/1','http://localhost:3001/api/monitor/sse/1','https://tiles.openfreemap.org/tile/1','http://localhost:3001/@vite/client','http://localhost:3001/?_rsc=1']) {
     let intercepted = false;
     handlers.get('fetch')({request:{method:'GET',url,mode:'cors'},respondWith:()=>{intercepted=true;}});
