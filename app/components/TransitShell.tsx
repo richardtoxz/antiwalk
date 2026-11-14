@@ -5,7 +5,7 @@ import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import type * as GeoJSON from "geojson";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Route, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { positionQuality, positionAgeLabel } from '@/lib/transport/quality';
 import { usePageVisible, useVisibleClock } from '@/lib/transport/visibility';
 import type { Place, JourneyOption } from '@/lib/transport/journeys';
@@ -1192,13 +1192,9 @@ export default function TransitShell() {
         stations={stationsQuery.data}
         isLoading={linesQuery.isLoading || stationsQuery.isLoading}
         onSelectResult={handleResultSelect}
-        selectedLines={selectedLines}
-        onRemoveLine={handleRemoveLine}
+        onPlanRoute={() => setPlannerOpen(true)}
       />
 
-      <button type="button" onClick={() => setPlannerOpen(true)} className={`absolute right-4 z-30 flex min-h-11 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-lg ${selectedLines.length ? 'top-32' : 'top-24'}`}>
-        <Route className="h-4 w-4" />Planejar viagem
-      </button>
       {picking && <div className="absolute left-4 right-4 top-44 z-30 flex items-center justify-between gap-2 rounded-xl bg-card p-3 shadow-lg"><p className="text-sm">Toque no mapa para escolher {picking === 'origin' ? 'a origem' : 'o destino'}.</p><button type="button" className="h-11 w-11" aria-label="Cancelar seleção no mapa" onClick={() => { setPicking(null); setPlannerOpen(true); }}><X /></button></div>}
       {journey && !picking && <div className="absolute right-4 top-48 z-20 max-w-[220px] rounded-xl bg-card p-3 text-xs shadow-lg"><p className="font-semibold">Percurso de cerca de {journey.durationMinutes} min</p>
         <p className="mt-1 text-muted-foreground">{journey.legs.some(l => l.mode === 'walk' && l.walkingRoute !== 'geoapify') ? 'Há caminhadas aproximadas. Confira os acessos a pé.' : 'Tempos estimados. Traçados do transporte aproximados.'}</p>
@@ -1263,6 +1259,7 @@ export default function TransitShell() {
           }
           activeBusRoutesData={activeBusRoutesData}
           busVehicles={filteredBusVehicles}
+          onSelectResult={handleResultSelect}
         />
       </div>
     </main>

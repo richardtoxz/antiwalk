@@ -5,7 +5,7 @@ import {
   ArrowLeft,
   Bus,
   Clock,
-  Menu,
+  Route,
   Search,
   TrainFront,
   X,
@@ -90,9 +90,7 @@ interface SearchBarProps {
   stations?: MetroStationsResponse;
   isLoading?: boolean;
   onSelectResult: (result: SearchSelection) => void;
-  onMenuClick?: () => void;
-  selectedLines?: string[];
-  onRemoveLine?: (line: string) => void;
+  onPlanRoute?: () => void;
 }
 
 export default function SearchBar({
@@ -100,9 +98,7 @@ export default function SearchBar({
   stations,
   isLoading = false,
   onSelectResult,
-  onMenuClick,
-  selectedLines = [],
-  onRemoveLine,
+  onPlanRoute,
 }: SearchBarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [query, setQuery] = useState("");
@@ -240,18 +236,18 @@ export default function SearchBar({
             )}
           >
             <button
-              onClick={isExpanded ? handleCollapse : onMenuClick}
+              onClick={isExpanded ? handleCollapse : handleExpand}
               className={cn(
                 "p-2.5 rounded-lg text-muted-foreground transition-all duration-200",
                 "hover:bg-accent hover:text-foreground",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               )}
-              aria-label={isExpanded ? "Fechar busca" : "Abrir menu"}
+              aria-label={isExpanded ? "Fechar busca" : "Buscar"}
             >
               {isExpanded ? (
                 <ArrowLeft className="w-5 h-5" />
               ) : (
-                <Menu className="w-5 h-5" />
+                <Search className="w-5 h-5" />
               )}
             </button>
 
@@ -265,7 +261,7 @@ export default function SearchBar({
                   setIsFocused(true);
                   if (!isExpanded) handleExpand();
                 }}
-                placeholder="Buscar linha ou estação..."
+                placeholder="Para onde?"
                 className={cn(
                   "w-full bg-transparent py-2 px-1 text-foreground placeholder:text-muted-foreground",
                   "outline-none font-medium text-base",
@@ -279,44 +275,25 @@ export default function SearchBar({
             </div>
 
             <button
-              onClick={query ? () => handleSearch("") : handleExpand}
+              onClick={query ? () => handleSearch("") : onPlanRoute}
               className={cn(
                 "p-2.5 rounded-lg transition-all duration-200",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 query
                   ? "text-muted-foreground hover:text-foreground hover:bg-accent"
-                  : "text-primary bg-primary/10 hover:bg-primary/20"
+                  : "bg-primary text-primary-foreground hover:opacity-90"
               )}
-              aria-label={query ? "Limpar busca" : "Buscar"}
+              aria-label={query ? "Limpar busca" : "Traçar rota"}
             >
               {query ? (
                 <X className="w-5 h-5" />
               ) : (
-                <Search className="w-5 h-5" />
+                <Route className="w-5 h-5" />
               )}
             </button>
 
             {!isExpanded && <ThemeToggle />}
           </div>
-
-          {selectedLines && selectedLines.length > 0 && (
-            <div className="flex items-center gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-none border-t border-border/10 pt-2.5">
-              {selectedLines.map((line) => (
-                <div
-                  key={line}
-                  className="flex items-center gap-1.5 bg-primary/10 border border-primary/20 text-primary text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
-                >
-                  <span>Linha {line}</span>
-                  <button
-                    onClick={() => onRemoveLine?.(line)}
-                    className="hover:bg-primary/20 rounded-full p-0.5 transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
 
           <div
             id="search-results"
