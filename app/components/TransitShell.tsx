@@ -3,6 +3,8 @@
 import { useQueryClient, useQueries } from "@tanstack/react-query";
 import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
+import { busIconId } from "@/lib/map/bus-icon";
+import { distanceMeters, easeOut, pathBetween, pointAlong, type LngLat } from "@/lib/map/vehicle-motion";
 import type * as GeoJSON from "geojson";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from 'lucide-react';
@@ -425,6 +427,9 @@ export default function TransitShell() {
   );
 
   const [throttledBusVehicleFeatures, setThrottledBusVehicleFeatures] = useState(busVehicleFeatures);
+  // Where each bus is drawn right now, so a new position animates from there.
+  const vehiclePositionsRef = useRef(new Map<string, { point: LngLat; heading: number }>());
+  const lastVehicleFrameRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({ type: "FeatureCollection", features: [] });
   const lastUpdateTimeRef = useRef<number>(0);
   const nextUpdateTimeoutRef = useRef<number | null>(null);
 
@@ -879,59 +884,30 @@ export default function TransitShell() {
       if (!mapInstance.getStyle()) return;
 
       safelyRunMapOperation("draw-bus-vehicle-layer", () => {
-        upsertGeoJsonSource(mapInstance, VEHICLES_SOURCE_ID, throttledBusVehicleFeatures);
+        upsertGeoJsonSource(mapInstance, VEHICLES_SOURCE_ID, lastVehicleFrameRef.current);
 
-        // 1. Bus background circle
+        // Layers from older versions of this view.
+        const existing = mapInstance.getLayer(VEHICLES_LAYER_ID);
+        if (existing && existing.type !== "symbol") mapInstance.removeLayer(VEHICLES_LAYER_ID);
+        if (mapInstance.getLayer("bus-vehicles-direction-layer")) mapInstance.removeLayer("bus-vehicles-direction-layer");
+
         if (!mapInstance.getLayer(VEHICLES_LAYER_ID)) {
           mapInstance.addLayer({
             id: VEHICLES_LAYER_ID,
-            type: "circle",
-            source: VEHICLES_SOURCE_ID,
-            paint: {
-              "circle-radius": 9.5,
-              "circle-color": ["get", "color"],
-              "circle-opacity": ["case", ["==", ["get", "quality"], "fresh"], 1, 0.55],
-              "circle-stroke-width": 2.5,
-              "circle-stroke-color": [
-                "case",
-                ["any", ["!=", ["get", "quality"], "fresh"], ["!", ["get", "delayKnown"]]],
-                "#94a3b8",
-                [">", ["coalesce", ["get", "delayMinutes"], 0], 5],
-                "#ef4444",
-                "#10b981"
-              ]
-            }
-          });
-        } else {
-          mapInstance.setPaintProperty(VEHICLES_LAYER_ID, "circle-color", ["get", "color"]);
-          mapInstance.setPaintProperty(VEHICLES_LAYER_ID, "circle-opacity", ["case", ["==", ["get", "quality"], "fresh"], 1, 0.55]);
-          mapInstance.setPaintProperty(VEHICLES_LAYER_ID, "circle-stroke-color", [
-            "case",
-            ["any", ["!=", ["get", "quality"], "fresh"], ["!", ["get", "delayKnown"]]],
-            "#94a3b8",
-            [">", ["coalesce", ["get", "delayMinutes"], 0], 5],
-            "#ef4444",
-            "#10b981"
-          ]);
-        }
-
-        // 2. Bus direction indicator arrow (▲ rotated by heading)
-        if (!mapInstance.getLayer("bus-vehicles-direction-layer")) {
-          mapInstance.addLayer({
-            id: "bus-vehicles-direction-layer",
             type: "symbol",
             source: VEHICLES_SOURCE_ID,
             layout: {
-              "text-field": "▲",
-              "text-font": ["Noto Sans Regular"],
-              "text-size": 7.5,
-              "text-rotate": ["to-number", ["get", "heading"], 0],
-              "text-keep-upright": false,
-              "text-anchor": "center"
+              "icon-image": ["get", "icon"],
+              "icon-rotate": ["to-number", ["get", "heading"], 0],
+              "icon-rotation-alignment": "map",
+              "icon-pitch-alignment": "map",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              "icon-size": ["interpolate", ["linear"], ["zoom"], 11, 0.5, 14, 0.8, 17, 1.35],
             },
             paint: {
-              "text-color": "#ffffff"
-            }
+              "icon-opacity": ["case", ["==", ["get", "quality"], "fresh"], 1, 0.5],
+            },
           });
         }
 
@@ -945,12 +921,12 @@ export default function TransitShell() {
               "text-field": ["get", "lineShortName"],
               "text-font": ["Noto Sans Regular"],
               "text-size": 10.5,
-              "text-offset": [0, -1.3],
+              "text-offset": [0, -1.6],
               "text-anchor": "bottom"
             },
             paint: {
               "text-color": "#141414",
-              "text-halo-color": "#ffffff",
+              "text-halo-color": "#F6F2E9",
               "text-halo-width": 2
             }
           });
@@ -967,7 +943,69 @@ export default function TransitShell() {
     return () => {
       mapInstance.off("style.load", drawLayers);
     };
-  }, [mapInstance, throttledBusVehicleFeatures]);
+  }, [mapInstance]);
+
+  // Slide each bus from where it is drawn to its new position, along the route when possible.
+  useEffect(() => {
+    if (!mapInstance) return;
+    const routes = new Map<string, LngLat[]>();
+    for (const feature of routeLineFeatures.features) {
+      routes.set(String(feature.properties?.lineShortName), feature.geometry.coordinates as LngLat[]);
+    }
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const shown = vehiclePositionsRef.current;
+    const plans = throttledBusVehicleFeatures.features.map((feature) => {
+      const key = `${feature.properties?.lineShortName}:${feature.properties?.vehicleId}`;
+      const target = feature.geometry.coordinates as LngLat;
+      const previous = shown.get(key);
+      // New buses and long jumps appear in place instead of sweeping across the map.
+      const path = !previous || reduceMotion || distanceMeters(previous.point, target) > 1500
+        ? [target]
+        : pathBetween(routes.get(String(feature.properties?.lineShortName)), previous.point, target);
+      return { key, feature, path, startHeading: previous?.heading };
+    });
+
+    const frame = (k: number): GeoJSON.FeatureCollection<GeoJSON.Point> => {
+      const next = new Map<string, { point: LngLat; heading: number }>();
+      const features = plans.map(({ key, feature, path, startHeading }) => {
+        const finalHeading = Number(feature.properties?.heading ?? 0);
+        const at = pointAlong(path, k);
+        const heading = k >= 1 ? finalHeading : at.heading ?? startHeading ?? finalHeading;
+        next.set(key, { point: at.point, heading });
+        return {
+          ...feature,
+          geometry: { type: "Point" as const, coordinates: at.point },
+          properties: { ...feature.properties, heading, icon: busIconId(String(feature.properties?.color ?? "#F5A300")) },
+        };
+      });
+      vehiclePositionsRef.current = next;
+      const collection = { type: "FeatureCollection" as const, features };
+      lastVehicleFrameRef.current = collection;
+      return collection;
+    };
+
+    const draw = (k: number) => {
+      const source = mapInstance.getSource(VEHICLES_SOURCE_ID) as GeoJSONSource | undefined;
+      const data = frame(k);
+      source?.setData(data);
+    };
+
+    const duration = 1600;
+    const moving = plans.some((plan) => plan.path.length > 1);
+    if (!moving) {
+      draw(1);
+      return;
+    }
+    const startedAt = performance.now();
+    let handle = 0;
+    const step = (time: number) => {
+      const k = Math.min(1, (time - startedAt) / duration);
+      draw(easeOut(k));
+      if (k < 1) handle = requestAnimationFrame(step);
+    };
+    handle = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(handle);
+  }, [mapInstance, throttledBusVehicleFeatures, routeLineFeatures]);
 
   // Click listeners & Hover pointer behaviors for interactive map layers
   useEffect(() => {

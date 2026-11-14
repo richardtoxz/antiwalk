@@ -13,6 +13,7 @@ import rawWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 const maplibreWorkerUrl = import.meta.env.DEV ? rawWorkerUrl : bundledWorkerUrl;
 import { Protocol } from "pmtiles";
 import { buildMapStyle } from "@/lib/map/style";
+import { BUS_ICON_PREFIX, drawBusIcon } from "@/lib/map/bus-icon";
 import { useTheme } from "./ThemeProvider";
 
 // Lets MapLibre read tiles straight from a PMTiles archive with range requests.
@@ -66,6 +67,14 @@ export default function Map({ onMapReady }: MapProps) {
     map.current.on("styleimagemissing", (event) => {
       if (!map.current || map.current.hasImage(event.id)) {
         return;
+      }
+
+      if (event.id.startsWith(BUS_ICON_PREFIX)) {
+        const icon = drawBusIcon(event.id.slice(BUS_ICON_PREFIX.length));
+        if (icon) {
+          map.current.addImage(event.id, { width: icon.width, height: icon.height, data: icon.data }, { pixelRatio: icon.pixelRatio });
+          return;
+        }
       }
 
       const size = 2;
