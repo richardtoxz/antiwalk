@@ -8,7 +8,6 @@ import {
   getLineRoutes,
   getRouteDetails,
   startRouteMonitoring,
-  getStopTimes,
 } from "./bus";
 import { HttpError, fetchJson } from "./http";
 import { isUsableRouteCache } from "./quality";
@@ -103,18 +102,6 @@ export function getErrorMessage(error: unknown): string {
   }
 
   return "Erro inesperado ao consultar dados de transporte.";
-}
-
-export function useStopTimesQuery(
-  stopId?: string | number,
-  refetchInterval: number | false = false
-) {
-  return useQuery({
-    queryKey: ["bus", "stoptimes", stopId],
-    queryFn: () => getStopTimes(stopId!),
-    enabled: Boolean(stopId),
-    refetchInterval,
-  });
 }
 
 export { useBusRealtimeData } from "./realtime";

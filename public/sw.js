@@ -1,5 +1,5 @@
-const CACHE_NAME = 'transporte-df-v2';
-const STATIC_ASSETS = ['/manifest.json', '/favicon.ico', '/icon-192x192.png', '/icon-512x512.png', '/apple-icon.png'];
+const CACHE_NAME = 'transporte-df-v3';
+const STATIC_ASSETS = ['/manifest.json', '/favicon.ico', '/icon.svg', '/icon-32x32.png', '/icon-192x192.png', '/icon-512x512.png', '/icon-maskable-512x512.png', '/apple-icon.png'];
 const MAX_ASSETS = 120;
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => Promise.allSettled(['/', ...STATIC_ASSETS].map(url => cache.add(url)))));

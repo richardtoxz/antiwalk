@@ -2,7 +2,7 @@ import { layers, namedFlavor, type Flavor } from "@protomaps/basemaps";
 import type { StyleSpecification } from "maplibre-gl";
 
 // Vector tiles of the Distrito Federal in a single PMTiles archive.
-export const MAP_TILES_PATH = "/map/df.pmtiles";
+export const MAP_TILES_URL = process.env.NEXT_PUBLIC_MAP_TILES_URL || "/map/df.pmtiles";
 // Fonts and icons published by the Protomaps basemaps project.
 const MAP_ASSETS_URL = "https://protomaps.github.io/basemaps-assets";
 
@@ -46,7 +46,7 @@ function paletteFlavor(theme: MapTheme): Flavor {
 }
 
 export function buildMapStyle(theme: MapTheme): StyleSpecification {
-  const tilesUrl = new URL(MAP_TILES_PATH, window.location.href).href;
+  const tilesUrl = new URL(MAP_TILES_URL, window.location.href).href;
   return {
     version: 8,
     glyphs: `${MAP_ASSETS_URL}/fonts/{fontstack}/{range}.pbf`,
