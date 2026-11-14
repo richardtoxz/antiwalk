@@ -4,8 +4,8 @@
   "description": "Aplicativo de transporte público do Distrito Federal. Encontre linhas de ônibus, estações de metrô e horários em tempo real.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#2563eb",
+  "background_color": "#E9E4D8",
+  "theme_color": "#000000",
   "orientation": "portrait",
   "categories": ["navigation", "travel", "public transit"],
   "icons": [

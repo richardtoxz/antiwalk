@@ -10,15 +10,13 @@ import {
 } from "react";
 import {
   AlertCircle,
+  ArrowLeftRight,
   Bus,
   ChevronDown,
-  Clock3,
   Loader2,
   Radio,
   TrainFront,
-  Wifi,
   X,
-  TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ArrivalPanel from './ArrivalPanel';
@@ -30,8 +28,32 @@ import type {
   MetroScheduleEntry,
   MetroStation,
   MetroTrainsResponse,
+  SearchSelection,
   SocketConnectionState,
 } from "@/lib/transport/types";
+
+const RECENTS_STORAGE_KEY = "transporte-df-recent-searches";
+
+// Black or white, whichever reads better on the operator color.
+function readableOn(hex?: string | null): string {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
+  if (!match) return "#000000";
+  const value = parseInt(match[1], 16);
+  const luminance = (0.299 * (value >> 16) + 0.587 * ((value >> 8) & 255) + 0.114 * (value & 255)) / 255;
+  return luminance > 0.6 ? "#000000" : "#FFFFFF";
+}
+
+function readRecents(): SearchSelection[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(RECENTS_STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is SearchSelection =>
+      Boolean(item) && typeof item.id === "string" && typeof item.title === "string" && (item.type === "line" || item.type === "station")
+    ).slice(0, 5);
+  } catch {
+    return [];
+  }
+}
 
 const SNAP_POINTS = {
   closed: 0,
@@ -72,6 +94,7 @@ interface BottomSheetProps {
   onChangeLineDirection: (line: string, directionId: number) => void;
   activeBusRoutesData: Record<string, BusRouteDetailsResponse>;
   busVehicles: BusVehicle[];
+  onSelectResult: (result: SearchSelection) => void;
 }
 
 function getSnapPointFromHeight(heightPercent: number): SnapPoint {
@@ -179,6 +202,7 @@ export default function BottomSheet({
   onChangeLineDirection,
   activeBusRoutesData,
   busVehicles,
+  onSelectResult,
 }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint>("peek");
@@ -401,16 +425,25 @@ export default function BottomSheet({
     };
   }, [currentSnap, isDesktop]);
 
-  const sheetHeight = isDesktop ? "auto" : `${heightPercent}dvh`;
+  const sheetHeight = isDesktop ? undefined : `${heightPercent}dvh`;
+  const lineColor = currentRouteData?.route.color ?? "var(--muted)";
+  const freshCount = busVehicles.filter((v) => positionQuality(v, now) === "fresh").length;
+  const nothingSelected = selectedLines.length === 0 && !selectedStationCode;
+
+  // Recent searches are written by the search field; re-read them whenever the home view shows.
+  const [recents, setRecents] = useState<SearchSelection[]>([]);
+  useEffect(() => {
+    if (nothingSelected) setRecents(readRecents());
+  }, [nothingSelected]);
 
   return (
     <div
       ref={sheetRef}
       className={cn(
         "fixed z-10 bg-card/95 backdrop-blur-xl border-border/50 transition-shadow duration-300",
-        "md:left-4 md:bottom-4 md:right-auto md:w-[380px] md:max-h-[calc(100dvh-6rem)]",
-        "md:rounded-2xl md:border md:shadow-2xl",
-        "left-0 right-0 bottom-0 rounded-t-3xl border-t shadow-[0_-8px_30px_rgba(0,0,0,0.12)]",
+        "md:left-4 md:top-[5.5rem] md:bottom-4 md:right-auto md:w-[380px]",
+        "md:rounded-xl md:border md:shadow-xl",
+        "left-0 right-0 bottom-0 rounded-t-2xl border-t shadow-[0_-8px_30px_rgba(0,0,0,0.16)]",
         isDragging ? "cursor-grabbing" : "",
         currentSnap === "full" && !isDesktop
           ? "shadow-[0_-16px_50px_rgba(0,0,0,0.2)]"
@@ -418,8 +451,8 @@ export default function BottomSheet({
       )}
       style={{
         height: sheetHeight,
-        minHeight: isDesktop ? "auto" : "60px",
-        maxHeight: isDesktop ? "calc(100dvh - 6rem)" : "90dvh",
+        minHeight: isDesktop ? undefined : "60px",
+        maxHeight: isDesktop ? undefined : "90dvh",
         transition: isDragging ? "none" : "height 0.3s cubic-bezier(0.32, 0.72, 0, 1)",
         willChange: "height",
       }}
@@ -463,398 +496,284 @@ export default function BottomSheet({
 
       <div
         className={cn(
-          "px-4 pb-safe-bottom md:p-5 overflow-y-auto overflow-x-hidden",
+          "px-4 pb-safe-bottom md:p-4 overflow-y-auto overflow-x-hidden",
           "scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent",
-          isDesktop ? "max-h-[calc(100dvh-8rem)]" : "h-full"
+          "h-full"
         )}
         style={{
           maxHeight: isDesktop ? undefined : `calc(${heightPercent}dvh - 60px)`,
         }}
       >
-        {/* Horizontal scrollable tab bar */}
         {(selectedLines.length > 0 || selectedStationCode) && (
-          <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 scrollbar-none border-b border-border/50 select-none">
+          <div className="mb-4 flex items-center gap-1.5 overflow-x-auto scrollbar-none select-none">
             {selectedStationCode && (
-              <button
-                onClick={() => onSelectFocusedLine(null)}
+              <span
                 className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all duration-200 border",
-                  focusedLine === null
-                    ? "bg-cta/10 text-cta border-cta/30 shadow-sm"
-                    : "bg-muted/40 text-muted-foreground border-transparent hover:bg-muted"
+                  "flex shrink-0 items-center rounded-full border text-sm font-medium",
+                  focusedLine === null ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground"
                 )}
               >
-                <TrainFront className="w-3.5 h-3.5" />
-                <span>Metrô: {selectedStation?.nome ?? selectedStationCode}</span>
-                <span
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSelectStationCode(null);
-                  }}
-                  className="hover:bg-muted-foreground/20 p-0.5 rounded-full ml-1"
-                >
-                  <X className="w-3 h-3" />
-                </span>
-              </button>
+                <button type="button" onClick={() => onSelectFocusedLine(null)} className="flex min-h-9 items-center gap-1.5 pl-3 pr-1">
+                  <TrainFront className="h-3.5 w-3.5" aria-hidden />
+                  {selectedStation?.nome ?? selectedStationCode}
+                </button>
+                <button type="button" onClick={() => onSelectStationCode(null)} aria-label="Fechar estação" className="flex min-h-9 items-center pl-1 pr-2.5">
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </span>
+            )}
+            {selectedLines.map((line) => (
+              <span
+                key={line}
+                className={cn(
+                  "flex shrink-0 items-center rounded-full border text-sm font-medium",
+                  focusedLine === line ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground"
+                )}
+              >
+                <button type="button" onClick={() => onSelectFocusedLine(line)} className="flex min-h-9 items-center gap-1.5 pl-3 pr-1 tabular-nums">
+                  <Bus className="h-3.5 w-3.5" aria-hidden />
+                  {line}
+                </button>
+                <button type="button" onClick={() => onRemoveLine(line)} aria-label={`Fechar linha ${line}`} className="flex min-h-9 items-center pl-1 pr-2.5">
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Home: nothing selected yet */}
+        {selectedLines.length === 0 && !selectedStationCode && (
+          <div>
+            <h2 className="text-lg font-semibold leading-tight">Para onde hoje?</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Busque uma linha ou estação no campo acima, ou trace uma rota entre dois lugares.
+            </p>
+
+            {recents.length > 0 && (
+              <section className="mt-5" aria-label="Buscas recentes">
+                <h3 className="text-xs font-medium text-muted-foreground">Recentes</h3>
+                <ul className="mt-1 divide-y divide-border">
+                  {recents.map((item) => (
+                    <li key={item.id}>
+                      <button type="button" onClick={() => onSelectResult(item)} className="flex min-h-12 w-full items-center gap-3 text-left">
+                        {item.type === "line" ? (
+                          <Bus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                        ) : (
+                          <TrainFront className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{item.title}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{item.subtitle}</span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
 
-            {selectedLines.map((line) => {
-              const routeData = activeBusRoutesData[line];
-              const isFocused = focusedLine === line;
-              const color = routeData?.route.color ?? "#2563eb";
+            <div className="mt-5 flex items-center gap-3 border-t border-border pt-3 text-sm">
+              <TrainFront className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="flex-1 font-medium">Metrô</span>
+              <span className="text-right text-muted-foreground">{formatMetroOperation(metroStatus)}</span>
+            </div>
+            <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
+              {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
+            </p>
+          </div>
+        )}
 
+        {/* A bus line */}
+        {focusedLine && (
+          <div>
+            <div className="flex items-start gap-3">
+              <span
+                className="shrink-0 rounded-md px-2.5 py-1 text-base font-bold tabular-nums"
+                style={{ backgroundColor: lineColor, color: readableOn(currentRouteData?.route.color) }}
+              >
+                {focusedLine}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold leading-snug">
+                  {currentRouteData?.route.longName ?? "Carregando itinerário…"}
+                </h2>
+                {currentRouteData?.route.price ? (
+                  <p className="text-xs text-muted-foreground">Tarifa R$ {currentRouteData.route.price.toFixed(2).replace(".", ",")}</p>
+                ) : null}
+              </div>
+            </div>
+
+            {currentRouteData && currentRouteData.directions.length > 1 && (() => {
+              const current = currentRouteData.directions.find((d) => d.directionId === currentDirectionId) ?? currentRouteData.directions[0];
+              const other = currentRouteData.directions.find((d) => d.directionId !== current.directionId) ?? current;
               return (
                 <button
-                  key={line}
-                  onClick={() => onSelectFocusedLine(line)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all duration-200 border",
-                    isFocused
-                      ? "shadow-sm"
-                      : "bg-muted/40 text-muted-foreground border-transparent hover:bg-muted"
-                  )}
-                  style={{
-                    backgroundColor: isFocused ? `${color}15` : undefined,
-                    color: isFocused ? color : undefined,
-                    borderColor: isFocused ? `${color}30` : undefined,
-                  }}
+                  type="button"
+                  onClick={() => onChangeLineDirection(focusedLine, other.directionId)}
+                  className="mt-3 flex min-h-12 w-full items-center gap-3 rounded-lg border border-border px-3 text-left hover:bg-accent"
                 >
-                  <Bus className="w-3.5 h-3.5" />
-                  <span>Linha {line}</span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRemoveLine(line);
-                    }}
-                    className="hover:bg-muted-foreground/20 p-0.5 rounded-full ml-1"
-                  >
-                    <X className="w-3 h-3" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs text-muted-foreground">Sentido</span>
+                    <span className="block truncate text-sm font-medium">
+                      {current.tripDetails.tripName || (current.directionId === 0 ? "Ida" : "Volta")}
+                    </span>
                   </span>
+                  <ArrowLeftRight className="h-4 w-4 shrink-0" aria-hidden />
+                  <span className="sr-only">Inverter sentido</span>
                 </button>
               );
-            })}
-          </div>
-        )}
+            })()}
 
-        <div className="mb-4 rounded-xl border border-border bg-background/50 p-3">
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-1.5 text-muted-foreground font-medium">
-              <Wifi className="w-3.5 h-3.5" />
-              <span>{focusedLine ? dataLabels[busDataQuality] : socketState === 'open' ? 'Conexão disponível' : 'Reconectando'}</span>
-            </div>
-            {focusedLine === null && selectedStationCode ? (
-              <div className="flex items-center gap-1.5 text-muted-foreground font-medium">
-                <Radio className="w-3.5 h-3.5 animate-pulse text-cta" />
-                <span>{getRealtimeModeLabel(metroRealtimeMode)}</span>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        {/* Empty State */}
-        {selectedLines.length === 0 && !selectedStationCode && (
-          <div className="space-y-3">
-            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-              <p className="text-sm font-semibold text-foreground">Escolha uma linha ou estação</p>
-              <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-                Use a barra de busca acima para ver o trajeto de ônibus com GPS em tempo real, ou selecione uma estação do metrô.
+            <p role="status" className="mt-3 flex flex-wrap items-center gap-x-2 text-sm">
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", freshCount > 0 ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
+              <span className="font-medium">{freshCount > 0 ? `${freshCount} ônibus ao vivo` : dataLabels[busDataQuality]}</span>
+              <span className="text-muted-foreground">{formatTimeAgo(busLastUpdate, now)}</span>
+            </p>
+            {freshCount > 0 && ['mixed', 'stale', 'expired', 'unknown', 'unavailable'].includes(busDataQuality) && (
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                {dataLabels[busDataQuality]}. Posições antigas não confirmam a chegada do ônibus.
               </p>
-            </div>
-            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-              <p className="text-sm font-semibold text-foreground">Funcionalidades</p>
-              <ul className="mt-2 space-y-2.5 text-xs text-muted-foreground">
-                <li className="flex items-center gap-2">
-                  <Bus className="w-4 h-4 text-primary" />
-                  <span>Pesquise múltiplas linhas de ônibus simultaneamente</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-emerald-500" />
-                  <span>Filtre ônibus e paradas por sentido (Ida/Volta)</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <TrainFront className="w-4 h-4 text-cta" />
-                  <span>Chegada dos trens e status operacional do Metrô-DF</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* Focused Bus Line Details */}
-        {focusedLine && (
-          <div className="space-y-3">
-            <div className="rounded-xl border border-border bg-card p-4 shadow-sm relative overflow-hidden">
-              <div
-                className="absolute left-0 top-0 bottom-0 w-1.5"
-                style={{ backgroundColor: currentRouteData?.route.color ?? "#2563eb" }}
-              />
-              <div className="pl-2">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Linha ativa</p>
-                <h3 className="mt-0.5 text-lg font-bold text-foreground">
-                  Linha {focusedLine}
-                </h3>
-                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
-                  {currentRouteData?.route.longName ?? "Carregando itinerário..."}
-                </p>
-
-                {currentRouteData && (
-                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
-                    <span
-                      className="rounded-full px-2 py-0.5"
-                      style={{
-                        backgroundColor: `${currentRouteData.route.color}15`,
-                        color: currentRouteData.route.color
-                      }}
-                    >
-                      {busVehicles.filter(v => positionQuality(v, now) === 'fresh').length} posição(ões) recente(s)
-                    </span>
-                    <span className="rounded-full bg-secondary/50 px-2 py-0.5 text-foreground">
-                      {routeStops.length} paradas
-                    </span>
-                    {currentRouteData.route.price ? (
-                      <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">
-                        Tarifa R$ {currentRouteData.route.price.toFixed(2)}
-                      </span>
-                    ) : null}
-                  </div>
-                )}
-                <p className="mt-3 text-xs text-muted-foreground">{formatTimeAgo(busLastUpdate, now)} · consulta à fonte</p>
-                {['mixed', 'stale', 'expired', 'unknown', 'unavailable'].includes(busDataQuality) && <p role="status" className="mt-2 text-xs text-amber-600">{dataLabels[busDataQuality]}. Posições antigas não confirmam a chegada do ônibus.</p>}
-              </div>
-            </div>
-
-            {/* Direction toggle */}
-            {currentRouteData && currentRouteData.directions.length > 0 && (
-              <div className="rounded-xl border border-border bg-card p-3 shadow-sm">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">
-                  Sentido da Rota
-                </h4>
-                {currentRouteData.directions.length === 1 ? (
-                  <div className="flex items-center gap-2 rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground font-medium">
-                    <TrendingUp className="h-4 w-4 text-emerald-500" />
-                    <span>Sentido único (Circular)</span>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2">
-                    {currentRouteData.directions.map((dir) => {
-                      const isSelected = dir.directionId === currentDirectionId;
-                      const color = currentRouteData.route.color ?? "#2563eb";
-                      return (
-                        <button
-                          key={dir.directionId}
-                          onClick={() => onChangeLineDirection(focusedLine, dir.directionId)}
-                          className={cn(
-                            "flex flex-col items-start gap-0.5 rounded-lg border p-2 text-left transition-all duration-200",
-                            isSelected
-                              ? "shadow-sm"
-                              : "border-border bg-background hover:bg-muted/30"
-                          )}
-                          style={{
-                            borderColor: isSelected ? color : undefined,
-                            backgroundColor: isSelected ? `${color}08` : undefined,
-                          }}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className="w-1.5 h-1.5 rounded-full"
-                              style={{ backgroundColor: isSelected ? color : "#9ca3af" }}
-                            />
-                            <span
-                              className="text-xs font-bold"
-                              style={{ color: isSelected ? color : "#4b5563" }}
-                            >
-                              {dir.directionId === 0 ? "Ida" : "Volta"}
-                            </span>
-                          </div>
-                          <span className="text-[9px] text-muted-foreground font-medium truncate w-full">
-                            {dir.tripDetails.tripName || "Ver no mapa"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
             )}
 
             {isBusLoading && (
-              <div className="rounded-xl border border-border bg-card p-4 text-xs text-muted-foreground shadow-sm">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  <span>Sincronizando paradas e GPS...</span>
-                </div>
-              </div>
+              <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Carregando paradas e posições…
+              </p>
             )}
 
             {busError && (
-              <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive shadow-sm">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 mt-0.5" />
+              <div role="alert" className="mt-4 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
+                <p className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                   <span>{busError}</span>
-                </div>
-                <button type="button" onClick={onRetryBus} className="mt-2 min-h-11 rounded-lg border border-current px-3 font-semibold">Tentar novamente</button>
+                </p>
+                <button type="button" onClick={onRetryBus} className="mt-2 min-h-11 rounded-lg border border-current px-3 font-semibold">
+                  Tentar novamente
+                </button>
               </div>
             )}
 
-            {currentRouteData && routeStops.length > 0 && <ArrivalPanel routeId={currentRouteData.route.routeId} stops={routeStops} selectedStopId={selectedStopId} onSelectStop={onSelectStop} />}
-
-            {/* Vertical timeline itinerario */}
             {!isBusLoading && !busError && routeStops.length > 0 && (
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between border-b border-border/50 pb-2">
-                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Itinerário</h4>
-                  <span className="text-[10px] text-muted-foreground font-semibold">
-                    {routeStops.length} paradas
-                  </span>
-                </div>
-                <div className="relative pl-4 space-y-3 max-h-[220px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-muted">
-                  {/* Timeline bar */}
-                  <div
-                    className="absolute left-[6px] top-1.5 bottom-1.5 w-[2px] rounded-full"
-                    style={{
-                      backgroundColor: currentRouteData?.route.color
-                        ? `${currentRouteData.route.color}20`
-                        : "rgba(37,99,235,0.15)"
-                    }}
-                  />
+              <section className="mt-5" aria-label="Paradas">
+                <h3 className="flex items-baseline justify-between text-xs font-medium text-muted-foreground">
+                  <span>Paradas</span>
+                  <span className="tabular-nums">{routeStops.length}</span>
+                </h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">Toque em uma parada para ver as próximas chegadas.</p>
+                <ol className="relative mt-1">
+                  <span className="absolute bottom-6 left-[5px] top-6 w-0.5 rounded-full opacity-40" style={{ backgroundColor: lineColor }} aria-hidden />
                   {routeStops.map((stop, index) => {
-                    const isFirst = index === 0;
-                    const isLast = index === routeStops.length - 1;
-                    const color = currentRouteData?.route.color ?? "#2563eb";
+                    const isEdge = index === 0 || index === routeStops.length - 1;
+                    const isSelected = stop.stopId === selectedStopId;
                     return (
-                      <div key={stop.stopId} className="relative flex items-start gap-2.5">
-                        {/* Circle Bullet */}
-                        <div
-                          className="absolute -left-[14px] top-1.5 w-2 h-2 rounded-full border border-card bg-background z-10"
-                          style={{
-                            borderColor: isFirst || isLast ? color : `${color}40`,
-                            backgroundColor: isFirst || isLast ? color : "#ffffff",
-                            transform: isFirst || isLast ? "scale(1.2)" : "scale(1.0)",
-                          }}
+                      <li key={`${stop.stopId}:${index}`} className="relative pl-6">
+                        <span
+                          className="absolute left-0 top-[18px] h-3 w-3 rounded-full border-2 bg-card"
+                          style={{ borderColor: lineColor, backgroundColor: isEdge || isSelected ? lineColor : undefined }}
+                          aria-hidden
                         />
-                        <button type="button" onClick={() => onSelectStop(stop.stopId)} className="flex-1 min-w-0 min-h-11 text-left" aria-label={`Ver chegadas em ${stop.name}`}>
-                          <p className={cn(
-                            "text-xs text-foreground truncate",
-                            (isFirst || isLast) && "font-bold"
-                          )}>
-                            {stop.name}
-                          </p>
-                          <span className="text-[9px] text-muted-foreground font-medium">
-                            Parada #{stop.stopId}
-                          </span>
+                        <button
+                          type="button"
+                          onClick={() => onSelectStop(isSelected ? null : stop.stopId)}
+                          aria-expanded={isSelected}
+                          className={cn("flex min-h-12 w-full items-center gap-2 text-left", !isSelected && "border-b border-border")}
+                        >
+                          <span className={cn("min-w-0 flex-1 truncate text-sm", (isEdge || isSelected) && "font-semibold")}>{stop.name}</span>
+                          <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none", isSelected && "rotate-180")} aria-hidden />
                         </button>
-                      </div>
+                        {isSelected && currentRouteData && <ArrivalPanel routeId={currentRouteData.route.routeId} stop={stop} />}
+                      </li>
                     );
                   })}
-                </div>
-              </div>
+                </ol>
+              </section>
             )}
           </div>
         )}
 
-        {/* Focused Station Details */}
+        {/* A metro station */}
         {focusedLine === null && selectedStationCode && (
-          <div className="space-y-3">
-            <div className="rounded-xl border border-border bg-card p-4 shadow-sm relative overflow-hidden">
-              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-cta" />
-              <div className="pl-2">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Estação ativa</p>
-                <h3 className="mt-0.5 text-lg font-bold text-foreground">
-                  {selectedStation?.nome ?? selectedStationCode}
-                </h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Linha {selectedStation?.linha ?? "indisponível"}
-                </p>
-                <p className="mt-3 text-[10px] text-muted-foreground font-semibold">{formatMetroOperation(metroStatus)}</p>
+          <div>
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
+                <TrainFront className="h-5 w-5" aria-hidden />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold leading-snug">{selectedStation?.nome ?? selectedStationCode}</h2>
+                <p className="text-xs text-muted-foreground">Linha {selectedStation?.linha ?? "indisponível"}</p>
+                <p className="text-xs text-muted-foreground">{formatMetroOperation(metroStatus)}</p>
               </div>
             </div>
 
             {selectedStation && (
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Plataformas</h4>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(selectedStation.plataformas).map(
-                    ([platform, sentido]) => (
-                      <button
-                        key={platform}
-                        onClick={() => onSelectPlatform(platform)}
-                        className={cn(
-                          "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all duration-200",
-                          selectedPlatform === platform
-                            ? "border-cta bg-cta/10 text-cta shadow-sm"
-                            : "border-border bg-background text-foreground hover:bg-muted/40"
-                        )}
-                      >
-                        P{platform}: {sentido}
-                      </button>
-                    )
-                  )}
-                </div>
+              <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Plataformas">
+                {Object.entries(selectedStation.plataformas).map(([platform, sentido]) => (
+                  <button
+                    key={platform}
+                    type="button"
+                    onClick={() => onSelectPlatform(platform)}
+                    aria-pressed={selectedPlatform === platform}
+                    className={cn(
+                      "min-h-12 rounded-lg border px-3 text-left",
+                      selectedPlatform === platform ? "border-foreground bg-foreground text-background" : "border-border hover:bg-accent"
+                    )}
+                  >
+                    <span className="block text-xs opacity-70">Plataforma {platform}</span>
+                    <span className="block text-sm font-medium">{sentido}</span>
+                  </button>
+                ))}
               </div>
             )}
 
+            <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <Radio className="h-3.5 w-3.5" aria-hidden />
+              {getRealtimeModeLabel(metroRealtimeMode)}
+            </p>
+
             {isMetroLoading && (
-              <div className="rounded-xl border border-border bg-card p-4 text-xs text-muted-foreground shadow-sm">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-cta" />
-                  <span>Sincronizando chegadas em tempo real...</span>
-                </div>
-              </div>
+              <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Carregando chegadas…
+              </p>
             )}
 
             {metroError && (
-              <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive shadow-sm">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 mt-0.5" />
-                  <span>{metroError}</span>
-                </div>
-              </div>
+              <p role="alert" className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <span>{metroError}</span>
+              </p>
             )}
 
             {!isMetroLoading && !metroError && metroTrains && (
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="mb-2.5 flex items-center justify-between border-b border-border/50 pb-2">
-                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Próximos Trens</h4>
-                  <span className="text-[10px] text-emerald-500 font-semibold uppercase">
-                    {metroTrains.status_operacional}
-                  </span>
-                </div>
-
+              <section className="mt-5" aria-label="Próximos trens">
+                <h3 className="flex items-baseline justify-between text-xs font-medium text-muted-foreground">
+                  <span>Próximos trens</span>
+                  <span>{metroTrains.status_operacional}</span>
+                </h3>
                 {metroTrains.trens.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-2 text-center">
-                    Sem trens no momento para esta plataforma.
-                  </p>
+                  <p className="py-3 text-sm text-muted-foreground">Sem trens no momento para esta plataforma.</p>
                 ) : (
-                  <ul className="space-y-2">
+                  <ul className="mt-1 divide-y divide-border">
                     {metroTrains.trens
                       .slice()
-                      .sort(
-                        (a, b) => a.chegada_em_minutos - b.chegada_em_minutos
-                      )
+                      .sort((a, b) => a.chegada_em_minutos - b.chegada_em_minutos)
                       .map((train) => (
-                        <li
-                          key={`${train.id_trem}-${train.chegada_em_minutos}`}
-                          className="rounded-lg bg-background border border-border/40 px-3 py-2 shadow-sm"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-foreground truncate">
-                                {train.destino_final}
-                              </p>
-                              <p className="text-[10px] text-muted-foreground font-medium truncate">
-                                Trem #{train.id_trem} • {train.sentido}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-1 text-xs font-bold text-cta whitespace-nowrap bg-cta/5 px-2 py-1 rounded-full border border-cta/15">
-                              <Clock3 className="h-3.5 w-3.5" />
-                              <span>{train.chegada_em_minutos} min</span>
-                            </div>
-                          </div>
+                        <li key={`${train.id_trem}-${train.chegada_em_minutos}`} className="flex min-h-12 items-center gap-3">
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{train.destino_final}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{train.sentido}</span>
+                          </span>
+                          <span className="shrink-0 text-sm font-semibold tabular-nums text-amber-700 dark:text-cta">
+                            {train.chegada_em_minutos === 0 ? "Na estação" : `${train.chegada_em_minutos} min`}
+                          </span>
                         </li>
                       ))}
                   </ul>
                 )}
-              </div>
+              </section>
             )}
           </div>
         )}
