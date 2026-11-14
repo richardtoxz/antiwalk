@@ -6,15 +6,15 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre 6 looks for its worker next to its own module file, which no longer
 // holds once the bundler moves that file. Bundle the worker and point to it.
 import bundledWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import rawWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 
-// In development Vite injects its reload client into bundled workers, and that client
-// needs a document, which workers lack. The raw module works there; builds use the bundle.
-const maplibreWorkerUrl = import.meta.env.DEV ? rawWorkerUrl : bundledWorkerUrl;
+// In development the worker is served untouched by the maplibre-worker-dev plugin (vite.config.ts),
+// because Vite's dev transform adds code that needs a document. Builds use the bundled worker.
+const maplibreWorkerUrl = import.meta.env.DEV ? "/__maplibre/maplibre-gl-worker.mjs" : bundledWorkerUrl;
 import { Protocol } from "pmtiles";
 import { buildMapStyle } from "@/lib/map/style";
 import { BUS_ICON_PREFIX, drawBusIcon } from "@/lib/map/bus-icon";
 import { useTheme } from "./ThemeProvider";
+
 
 // Lets MapLibre read tiles straight from a PMTiles archive with range requests.
 let pmtilesRegistered = false;
@@ -58,11 +58,15 @@ export default function Map({ onMapReady }: MapProps) {
         [-48.342125, -16.161104],
         [-47.282869, -15.426097],
       ],
-      pitchWithRotate: false,
+      pitchWithRotate: true,
+      touchPitch: false,
       dragRotate: false,
       touchZoomRotate: true,
       attributionControl: false,
     });
+
+    // Development-only handle for inspecting the map from the browser console.
+    if (import.meta.env.DEV) (window as unknown as { __antiwalkMap?: maplibregl.Map }).__antiwalkMap = map.current;
 
     map.current.on("styleimagemissing", (event) => {
       if (!map.current || map.current.hasImage(event.id)) {

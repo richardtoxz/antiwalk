@@ -4,9 +4,25 @@ import { useQueryClient, useQueries } from "@tanstack/react-query";
 import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import { busIconId } from "@/lib/map/bus-icon";
-import { distanceMeters, easeOut, pathBetween, pointAlong, type LngLat } from "@/lib/map/vehicle-motion";
+import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pointAlong, type LngLat } from "@/lib/map/vehicle-motion";
+import { markSlow3D, readBusRenderMode, resolveUses3D, writeBusRenderMode, type BusRenderMode } from "@/lib/map/render-mode";
+import type { Transit3DLayer, Vehicle3D } from "@/lib/map/transit-3d-layer";
+
+const TRANSIT_3D_LAYER_ID = "transit-3d-layer";
+const BUS_MODE_EVENT = "antiwalk-bus-mode";
+const subscribeBusMode = (notify: () => void) => {
+  window.addEventListener(BUS_MODE_EVENT, notify);
+  return () => window.removeEventListener(BUS_MODE_EVENT, notify);
+};
+const getServerBusMode = (): BusRenderMode => "auto";
+
+// Flat icons stay in place (they keep the click target); in 3D mode they are fully transparent.
+function setVehicleIconsHidden(map: maplibregl.Map, hidden: boolean) {
+  if (!map.getLayer(VEHICLES_LAYER_ID)) return;
+  map.setPaintProperty(VEHICLES_LAYER_ID, "icon-opacity", hidden ? 0 : ["case", ["==", ["get", "quality"], "fresh"], 1, 0.5]);
+}
 import type * as GeoJSON from "geojson";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { X } from 'lucide-react';
 import { positionQuality, positionAgeLabel } from '@/lib/transport/quality';
 import { usePageVisible, useVisibleClock } from '@/lib/transport/visibility';
@@ -427,9 +443,39 @@ export default function TransitShell() {
   );
 
   const [throttledBusVehicleFeatures, setThrottledBusVehicleFeatures] = useState(busVehicleFeatures);
+  const busMode = useSyncExternalStore(subscribeBusMode, readBusRenderMode, getServerBusMode);
+  const changeBusMode = useCallback((mode: BusRenderMode) => {
+    writeBusRenderMode(mode);
+    window.dispatchEvent(new Event(BUS_MODE_EVENT));
+  }, []);
+  const [slow3D, setSlow3D] = useState(false);
+  const capable3D = useSyncExternalStore(subscribeBusMode, () => resolveUses3D(busMode), () => false);
+  const use3D = capable3D && !(busMode === "auto" && slow3D);
+  const transit3DRef = useRef<Transit3DLayer | null>(null);
+
   // Where each bus is drawn right now, so a new position animates from there.
   const vehiclePositionsRef = useRef(new Map<string, { point: LngLat; heading: number }>());
   const lastVehicleFrameRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({ type: "FeatureCollection", features: [] });
+  const stops3DRef = useRef<{ key: string; lng: number; lat: number; heading: number; name: string }[]>([]);
+  const watchFrameRate = useRef(false);
+  const toVehicles3D = useCallback((collection: GeoJSON.FeatureCollection<GeoJSON.Point>): Vehicle3D[] =>
+    collection.features.map((feature) => {
+      const line = String(feature.properties?.lineShortName ?? "");
+      const routeData = activeBusRoutesData[line];
+      const direction = routeData?.directions.find((d) => d.directionId === (lineDirections[line] ?? 0));
+      return {
+        key: `${line}:${feature.properties?.vehicleId}`,
+        lng: feature.geometry.coordinates[0],
+        lat: feature.geometry.coordinates[1],
+        heading: Number(feature.properties?.heading ?? 0),
+        color: String(feature.properties?.color ?? "#F5A300"),
+        line,
+        destination: direction?.tripDetails.tripName ?? routeData?.route.longName ?? "",
+      };
+    }), [activeBusRoutesData, lineDirections]);
+  // Effects read the latest converter through a ref, so new route data does not restart them.
+  const toVehicles3DRef = useRef(toVehicles3D);
+  useEffect(() => { toVehicles3DRef.current = toVehicles3D; }, [toVehicles3D]);
   const lastUpdateTimeRef = useRef<number>(0);
   const nextUpdateTimeoutRef = useRef<number | null>(null);
 
@@ -988,6 +1034,7 @@ export default function TransitShell() {
       const source = mapInstance.getSource(VEHICLES_SOURCE_ID) as GeoJSONSource | undefined;
       const data = frame(k);
       source?.setData(data);
+      transit3DRef.current?.setVehicles(toVehicles3DRef.current(data));
     };
 
     const duration = 1600;
@@ -998,14 +1045,74 @@ export default function TransitShell() {
     }
     const startedAt = performance.now();
     let handle = 0;
+    let frames = 0;
     const step = (time: number) => {
       const k = Math.min(1, (time - startedAt) / duration);
       draw(easeOut(k));
-      if (k < 1) handle = requestAnimationFrame(step);
+      frames++;
+      if (k < 1) {
+        handle = requestAnimationFrame(step);
+      } else if (watchFrameRate.current && frames < (duration / 1000) * 22) {
+        // Fewer than ~22 frames per second while the map was moving: fall back to icons for good.
+        markSlow3D();
+        setSlow3D(true);
+      }
     };
     handle = requestAnimationFrame(step);
     return () => cancelAnimationFrame(handle);
   }, [mapInstance, throttledBusVehicleFeatures, routeLineFeatures]);
+
+  // 3D layer: loaded on demand, re-added when the style changes (theme switch).
+  useEffect(() => {
+    watchFrameRate.current = use3D && busMode === "auto";
+    if (!mapInstance || !use3D) return;
+    let cancelled = false;
+    let layer: Transit3DLayer | null = null;
+    const attach = () => {
+      if (!layer || !mapInstance.getStyle() || mapInstance.getLayer(TRANSIT_3D_LAYER_ID)) return;
+      // Added on top: inserted between symbol layers, three.js leaves GL state the map's next passes do not expect.
+      mapInstance.addLayer(layer);
+      setVehicleIconsHidden(mapInstance, true);
+    };
+    import("@/lib/map/transit-3d-layer").then(({ createTransit3DLayer }) => {
+      if (cancelled) return;
+      layer = createTransit3DLayer(TRANSIT_3D_LAYER_ID);
+      transit3DRef.current = layer;
+      attach();
+      layer.setVehicles(toVehicles3DRef.current(lastVehicleFrameRef.current));
+      layer.setStops(stops3DRef.current);
+    });
+    mapInstance.on("style.load", attach);
+    // Tilting is what shows the models in 3D; it stays off in light mode.
+    mapInstance.dragRotate.enable();
+    mapInstance.touchZoomRotate.enableRotation();
+    mapInstance.touchPitch.enable();
+    if (mapInstance.getPitch() < 30) mapInstance.easeTo({ pitch: 45, duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 600 });
+    return () => {
+      cancelled = true;
+      mapInstance.dragRotate.disable();
+      mapInstance.touchPitch.disable();
+      mapInstance.easeTo({ pitch: 0, bearing: 0, duration: 0 });
+      mapInstance.off("style.load", attach);
+      transit3DRef.current = null;
+      if (mapInstance.getLayer(TRANSIT_3D_LAYER_ID)) mapInstance.removeLayer(TRANSIT_3D_LAYER_ID);
+      setVehicleIconsHidden(mapInstance, false);
+    };
+  }, [mapInstance, use3D, busMode]);
+
+  // Stops for the 3D layer, oriented by the route's direction at each stop.
+  useEffect(() => {
+    const routes = new Map<string, LngLat[]>();
+    for (const feature of routeLineFeatures.features) routes.set(String(feature.properties?.lineShortName), feature.geometry.coordinates as LngLat[]);
+    stops3DRef.current = routeStopsFeatures.features.map((feature, index) => {
+      const point = feature.geometry.coordinates as LngLat;
+      const line = routes.get(String(feature.properties?.lineShortName));
+      const at = line ? locateOnLine(line, point) : null;
+      const heading = line && at ? bearing(line[at.index], line[at.index + 1]) : 0;
+      return { key: `${feature.properties?.lineShortName}:${feature.properties?.stopId}:${index}`, lng: point[0], lat: point[1], heading, name: String(feature.properties?.name ?? "Parada") };
+    });
+    transit3DRef.current?.setStops(stops3DRef.current);
+  }, [routeStopsFeatures, routeLineFeatures]);
 
   // Click listeners & Hover pointer behaviors for interactive map layers
   useEffect(() => {
@@ -1283,6 +1390,9 @@ export default function TransitShell() {
           busVehicles={filteredBusVehicles}
           onSelectResult={handleResultSelect}
           isRealtimeFallback={isSseFallback}
+          busMode={busMode}
+          onBusModeChange={changeBusMode}
+          uses3D={use3D}
           hasCachedRoutes={Object.values(staleRoutes).some(Boolean)}
         />
       </div>

@@ -97,6 +97,9 @@ interface BottomSheetProps {
   onSelectResult: (result: SearchSelection) => void;
   isRealtimeFallback?: boolean;
   hasCachedRoutes?: boolean;
+  busMode?: "auto" | "light" | "full";
+  onBusModeChange?: (mode: "auto" | "light" | "full") => void;
+  uses3D?: boolean;
 }
 
 function getSnapPointFromHeight(heightPercent: number): SnapPoint {
@@ -207,6 +210,9 @@ export default function BottomSheet({
   onSelectResult,
   isRealtimeFallback = false,
   hasCachedRoutes = false,
+  busMode = "auto",
+  onBusModeChange,
+  uses3D = false,
 }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint>("peek");
@@ -582,6 +588,37 @@ export default function BottomSheet({
               <span className="flex-1 font-medium">Metrô</span>
               <span className="text-right text-muted-foreground">{formatMetroOperation(metroStatus)}</span>
             </div>
+            {onBusModeChange && (
+              <fieldset className="mt-4 border-t border-border pt-3">
+                <legend className="sr-only">Ônibus no mapa</legend>
+                <p className="text-sm font-medium" aria-hidden>Ônibus no mapa</p>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  {([["auto", "Automático"], ["light", "Leve"], ["full", "3D"]] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={busMode === value}
+                      onClick={() => onBusModeChange(value)}
+                      className={cn(
+                        "min-h-11 rounded-lg border text-sm font-medium",
+                        busMode === value ? "border-foreground bg-foreground text-background" : "border-border hover:bg-accent"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground" suppressHydrationWarning>
+                  {uses3D
+                    ? "Usando modelos 3D. Aproxime o mapa para ver os ônibus e as paradas."
+                    : busMode === "light"
+                      ? "Usando ícones leves, que economizam bateria."
+                      : busMode === "full"
+                        ? "Este aparelho não oferece 3D. Usando ícones leves."
+                        : "Usando ícones leves neste aparelho."}
+                </p>
+              </fieldset>
+            )}
             <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
               <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
               {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
