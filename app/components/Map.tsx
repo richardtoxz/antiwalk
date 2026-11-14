@@ -6,7 +6,17 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre 6 looks for its worker next to its own module file, which no longer
 // holds once the bundler moves that file. Bundle the worker and point to it.
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import { Protocol } from "pmtiles";
+import { buildMapStyle } from "@/lib/map/style";
 import { useTheme } from "./ThemeProvider";
+
+// Lets MapLibre read tiles straight from a PMTiles archive with range requests.
+let pmtilesRegistered = false;
+function registerPmtiles() {
+  if (pmtilesRegistered) return;
+  maplibregl.addProtocol("pmtiles", new Protocol().tile);
+  pmtilesRegistered = true;
+}
 
 interface MapProps {
   onMapReady?: (map: maplibregl.Map) => void;
@@ -21,19 +31,14 @@ export default function Map({ onMapReady }: MapProps) {
   const readyRef = useRef(onMapReady);
   readyRef.current = onMapReady;
 
-  const getMapStyle = (theme: "light" | "dark") => {
-    return theme === "dark"
-      ? "https://tiles.openfreemap.org/styles/dark"
-      : "https://tiles.openfreemap.org/styles/liberty";
-  };
-
-  const currentStyleRef = useRef(getMapStyle(resolvedTheme));
+  const currentThemeRef = useRef(resolvedTheme);
 
   const initializeMap = useCallback(() => {
     if (map.current || !mapContainer.current) return;
 
-    const initialStyle = getMapStyle(themeRef.current);
-    currentStyleRef.current = initialStyle;
+    registerPmtiles();
+    const initialStyle = buildMapStyle(themeRef.current);
+    currentThemeRef.current = themeRef.current;
 
     maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
@@ -121,11 +126,9 @@ export default function Map({ onMapReady }: MapProps) {
   // Watch for theme changes and update map style
   useEffect(() => {
     if (map.current) {
-      const styleUrl = getMapStyle(resolvedTheme);
-      if (styleUrl !== currentStyleRef.current) {
-        console.log("[Map] Theme changed. Applying style:", styleUrl);
-        currentStyleRef.current = styleUrl;
-        map.current.setStyle(styleUrl);
+      if (resolvedTheme !== currentThemeRef.current) {
+        currentThemeRef.current = resolvedTheme;
+        map.current.setStyle(buildMapStyle(resolvedTheme));
       }
     }
   }, [resolvedTheme]);

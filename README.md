@@ -29,7 +29,7 @@ O Antiwalk é a interface. Os dados vêm de uma API própria, o projeto `websock
 - React 19 e TypeScript
 - Tailwind CSS
 - TanStack Query
-- MapLibre GL JS com mapa do OpenFreeMap
+- MapLibre GL JS com mapa próprio do DF em PMTiles (Protomaps)
 - WebSocket e SSE para dados em tempo real
 - Geoapify para endereços e rotas a pé
 
@@ -40,4 +40,4 @@ O Antiwalk é a interface. Os dados vêm de uma API própria, o projeto `websock
 - Feriados e atrasos podem alterar os horários programados.
 - A interface informa quando os dados estão antigos, incompletos ou indisponíveis.
 
-Dados de mapa © OpenStreetMap, com OpenFreeMap e Geoapify.
+Dados de mapa © OpenStreetMap, com Protomaps e Geoapify.

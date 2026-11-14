@@ -43,3 +43,6 @@ next-env.d.ts
 
 # vinext
 /.vinext/
+
+# map tiles (generated, hosted outside git)
+/public/map/*.pmtiles
