@@ -33,9 +33,11 @@ export default function Map({ onMapReady }: MapProps) {
   const map = useRef<maplibregl.Map | null>(null);
   const { resolvedTheme } = useTheme();
   const themeRef = useRef(resolvedTheme);
-  themeRef.current = resolvedTheme;
   const readyRef = useRef(onMapReady);
-  readyRef.current = onMapReady;
+  useEffect(() => {
+    themeRef.current = resolvedTheme;
+    readyRef.current = onMapReady;
+  });
 
   const currentThemeRef = useRef(resolvedTheme);
 

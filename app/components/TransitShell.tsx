@@ -10,23 +10,26 @@ import type { Transit3DLayer, Vehicle3D } from "@/lib/map/transit-3d-layer";
 import { readLinkTarget, writeLinkTarget } from "@/lib/navigation/share-link";
 import { lineSelection, readFavorites, readFavoritesOnServer, stationSelection, subscribeFavorites, toggleFavorite } from "@/lib/navigation/favorites";
 
-const TRANSIT_3D_LAYER_ID = "transit-3d-layer";
-const BUS_MODE_EVENT = "antiwalk-bus-mode";
-const subscribeBusMode = (notify: () => void) => {
-  window.addEventListener(BUS_MODE_EVENT, notify);
-  return () => window.removeEventListener(BUS_MODE_EVENT, notify);
-};
-const getServerBusMode = (): BusRenderMode => "auto";
-
-// Flat icons stay in place (they keep the click target); in 3D mode they are fully transparent.
-function setVehicleIconsHidden(map: maplibregl.Map, hidden: boolean) {
-  if (!map.getLayer(VEHICLES_LAYER_ID)) return;
-  map.setPaintProperty(VEHICLES_LAYER_ID, "icon-opacity", hidden ? 0 : ["case", ["==", ["get", "quality"], "fresh"], 1, 0.5]);
-}
 import type * as GeoJSON from "geojson";
+import {
+  ROUTE_SOURCE_ID,
+  ROUTE_LAYER_ID,
+  STOPS_SOURCE_ID,
+  STOPS_LAYER_ID,
+  VEHICLES_SOURCE_ID,
+  VEHICLES_LAYER_ID,
+  escapeHtml,
+  vehiclePopup,
+  latLngToLngLat,
+  createRouteLineFeatureCollection,
+  createStopsFeatureCollection,
+  createVehicleFeatureCollection,
+  upsertGeoJsonSource,
+  safelyRunMapOperation,
+} from "@/lib/map/features";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { X } from 'lucide-react';
-import { positionQuality, positionAgeLabel } from '@/lib/transport/quality';
+import { positionQuality } from '@/lib/transport/quality';
 import { usePageVisible, useVisibleClock } from '@/lib/transport/visibility';
 import type { Place, JourneyOption } from '@/lib/transport/journeys';
 import BottomSheet from "./BottomSheet";
@@ -62,160 +65,18 @@ import {
 
 const JourneyPanel = lazy(() => import('./JourneyPanel'));
 
-const ROUTE_SOURCE_ID = "bus-route-source";
-const ROUTE_LAYER_ID = "bus-route-layer";
-const STOPS_SOURCE_ID = "bus-stops-source";
-const STOPS_LAYER_ID = "bus-stops-layer";
-const VEHICLES_SOURCE_ID = "bus-vehicles-source";
-const VEHICLES_LAYER_ID = "bus-vehicles-layer";
+const TRANSIT_3D_LAYER_ID = "transit-3d-layer";
+const BUS_MODE_EVENT = "antiwalk-bus-mode";
+const subscribeBusMode = (notify: () => void) => {
+  window.addEventListener(BUS_MODE_EVENT, notify);
+  return () => window.removeEventListener(BUS_MODE_EVENT, notify);
+};
+const getServerBusMode = (): BusRenderMode => "auto";
 
-function escapeHtml(value: unknown) {
-  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
-function vehiclePopup(vehicle: BusVehicle & { lineShortName: string }, now: number) {
-  const delay = vehicle.delayMinutes;
-  const status = delay == null ? 'Atraso não informado' : delay > 0 ? `${delay} min de atraso` : delay < 0 ? `${Math.abs(delay)} min adiantado` : 'No horário informado';
-  return `<div class="p-2 text-xs"><strong>Linha ${escapeHtml(vehicle.lineShortName)}</strong><div>Veículo: ${escapeHtml(vehicle.vehicleId)}</div><div>${escapeHtml(status)}</div><div>${escapeHtml(positionAgeLabel(vehicle, now))}</div>${positionQuality(vehicle, now) !== 'fresh' ? '<div>Posição sem confirmação recente.</div>' : ''}</div>`;
-}
-
-function latLngToLngLat(lat: number, lng: number): [number, number] {
-  return [lng, lat];
-}
-
-function createRouteLineFeatureCollection(
-  activeBusRoutesData: Record<string, BusRouteDetailsResponse>,
-  lineDirections: Record<string, number>,
-  staleRoutes: Record<number, boolean>
-): GeoJSON.FeatureCollection<GeoJSON.LineString> {
-  const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
-
-  Object.entries(activeBusRoutesData).forEach(([line, routeData]) => {
-    const selectedDirectionId = lineDirections[line] ?? 0;
-    const direction = routeData.directions.find(
-      (d) => d.directionId === selectedDirectionId
-    );
-
-    if (direction && direction.tripDetails) {
-      const coordinates = direction.tripDetails.coordinates
-        .map(([lat, lng]) => latLngToLngLat(lat, lng))
-        .filter((value) => Number.isFinite(value[0]) && Number.isFinite(value[1]));
-
-      if (coordinates.length >= 2) {
-        const isStale = Boolean(staleRoutes[routeData.route.routeId]);
-        features.push({
-          type: "Feature",
-          geometry: {
-            type: "LineString",
-            coordinates,
-          },
-          properties: {
-            lineShortName: line,
-            directionId: selectedDirectionId,
-            color: routeData.route.color ?? "#F5A300",
-            isStale,
-          },
-        });
-      }
-    }
-  });
-
-  return {
-    type: "FeatureCollection",
-    features,
-  };
-}
-
-function createStopsFeatureCollection(
-  activeBusRoutesData: Record<string, BusRouteDetailsResponse>,
-  lineDirections: Record<string, number>
-): GeoJSON.FeatureCollection<GeoJSON.Point> {
-  const features: GeoJSON.Feature<GeoJSON.Point>[] = [];
-
-  Object.entries(activeBusRoutesData).forEach(([line, routeData]) => {
-    const selectedDirectionId = lineDirections[line] ?? 0;
-    const direction = routeData.directions.find(
-      (d) => d.directionId === selectedDirectionId
-    );
-
-    if (direction && direction.tripDetails) {
-      direction.tripDetails.stops.forEach((stop) => {
-        features.push({
-          type: "Feature",
-          geometry: {
-            type: "Point",
-            coordinates: latLngToLngLat(stop.lat, stop.lng),
-          },
-          properties: {
-            stopId: stop.stopId,
-            name: stop.name,
-            lineShortName: line,
-            color: routeData.route.color ?? "#F5A300",
-          },
-        });
-      });
-    }
-  });
-
-  return {
-    type: "FeatureCollection",
-    features,
-  };
-}
-
-function createVehicleFeatureCollection(
-  vehicles: (BusVehicle & { lineShortName: string })[],
-  activeBusRoutesData: Record<string, BusRouteDetailsResponse>, now: number
-): GeoJSON.FeatureCollection<GeoJSON.Point> {
-  return {
-    type: "FeatureCollection",
-    features: vehicles
-      .filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng))
-      .map((vehicle) => {
-        const routeData = activeBusRoutesData[vehicle.lineShortName];
-        return {
-          type: "Feature",
-          geometry: {
-            type: "Point",
-            coordinates: latLngToLngLat(vehicle.lat, vehicle.lng),
-          },
-          properties: {
-            vehicleId: vehicle.vehicleId,
-            delayMinutes: vehicle.delayMinutes ?? 0,
-            delayKnown: vehicle.delayMinutes != null,
-            observedAt: vehicle.observedAt,
-            quality: positionQuality(vehicle, now),
-            heading: vehicle.heading ?? 0,
-            lineShortName: vehicle.lineShortName,
-            color: routeData?.route.color ?? "#F5A300",
-          },
-        };
-      }),
-  };
-}
-
-function upsertGeoJsonSource(
-  map: maplibregl.Map,
-  sourceId: string,
-  data: GeoJSON.FeatureCollection
-): void {
-  const existing = map.getSource(sourceId) as GeoJSONSource | undefined;
-  if (existing) {
-    existing.setData(data);
-    return;
-  }
-
-  map.addSource(sourceId, {
-    type: "geojson",
-    data,
-  });
-}
-
-function safelyRunMapOperation(operation: string, task: () => void): void {
-  try {
-    task();
-  } catch (error) {
-    console.error(`[map] Failed during ${operation}`, error);
-  }
+// Flat icons stay in place (they keep the click target); in 3D mode they are fully transparent.
+function setVehicleIconsHidden(map: maplibregl.Map, hidden: boolean) {
+  if (!map.getLayer(VEHICLES_LAYER_ID)) return;
+  map.setPaintProperty(VEHICLES_LAYER_ID, "icon-opacity", hidden ? 0 : ["case", ["==", ["get", "quality"], "fresh"], 1, 0.5]);
 }
 
 export default function TransitShell() {
@@ -425,7 +286,7 @@ export default function TransitShell() {
     [activeBusRoutesData, lineDirections, staleRoutes]
   );
   const vehiclesRef = useRef(filteredBusVehicles);
-  vehiclesRef.current = filteredBusVehicles;
+  useEffect(() => { vehiclesRef.current = filteredBusVehicles; }, [filteredBusVehicles]);
   useEffect(() => {
     const active = busPopupRef.current;
     if (!active) return;

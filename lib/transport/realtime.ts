@@ -14,7 +14,8 @@ export function useBusRealtimeData(selectedLines: string[], routeData: Record<st
   const [statusByLine, setStatus] = useState<Record<string, BusDataStatus>>({});
   const [updatesByLine, setUpdates] = useState<Record<string, string>>({});
   const visible = usePageVisible();
-  const current = useRef(routeData); current.current = routeData;
+  const current = useRef(routeData);
+  useEffect(() => { current.current = routeData; }, [routeData]);
   const ids = useMemo(() => selectedLines.flatMap(line => routeData[line] ? [routeData[line].route.routeId] : []), [selectedLines, routeData]);
   const idsKey = ids.join(',');
   useEffect(() => sseTransportClient.onFallbackChange(setIsFallback), []);

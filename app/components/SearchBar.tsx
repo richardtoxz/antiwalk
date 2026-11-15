@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { MetroStationsResponse, SearchSelection } from "@/lib/transport/types";
 import { getPlaces, type Place } from "@/lib/transport/journeys";
+import { recentsStore, rememberSearch } from "@/lib/navigation/selection-store";
 import ThemeToggle from "./ThemeToggle";
 
 function ResultRow({ icon, title, subtitle, trailing, onClick }: {
@@ -37,76 +38,7 @@ function ResultRow({ icon, title, subtitle, trailing, onClick }: {
   );
 }
 
-const RECENTS_STORAGE_KEY = "transporte-df-recent-searches";
 const MAX_RESULTS = 20;
-const MAX_RECENTS = 6;
-
-function isSearchSelection(value: unknown): value is SearchSelection {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const candidate = value as Partial<SearchSelection>;
-  if (
-    typeof candidate.id !== "string" ||
-    typeof candidate.title !== "string" ||
-    typeof candidate.subtitle !== "string"
-  ) {
-    return false;
-  }
-
-  if (candidate.type === "line") {
-    return typeof candidate.shortName === "string";
-  }
-
-  if (candidate.type === "station") {
-    return typeof candidate.stationCode === "string";
-  }
-
-  return false;
-}
-
-function loadRecentSearches(): SearchSelection[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  try {
-    const raw = localStorage.getItem(RECENTS_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.filter(isSearchSelection).slice(0, MAX_RECENTS);
-  } catch {
-    return [];
-  }
-}
-
-function persistRecentSearches(items: SearchSelection[]): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(items.slice(0, MAX_RECENTS)));
-  } catch {
-    // Ignore storage failures and keep search functional.
-  }
-}
-
-function pushRecentSearch(
-  items: SearchSelection[],
-  selected: SearchSelection
-): SearchSelection[] {
-  const withoutDuplicate = items.filter((item) => item.id !== selected.id);
-  return [selected, ...withoutDuplicate].slice(0, MAX_RECENTS);
-}
 
 interface SearchBarProps {
   lines: string[];
@@ -128,13 +60,9 @@ export default function SearchBar({
   const [isExpanded, setIsExpanded] = useState(false);
   const [query, setQuery] = useState("");
   const [isFocused, setIsFocused] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<SearchSelection[]>([]);
+  const recentSearches = useSyncExternalStore(recentsStore.subscribe, recentsStore.read, recentsStore.readOnServer);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setRecentSearches(loadRecentSearches());
-  }, []);
 
   const searchableItems = useMemo<SearchSelection[]>(() => {
     const stationItems: SearchSelection[] = Object.entries(stations ?? {}).map(
@@ -188,11 +116,7 @@ export default function SearchBar({
     (result: SearchSelection) => {
       onSelectResult(result);
 
-      setRecentSearches((current) => {
-        const next = pushRecentSearch(current, result);
-        persistRecentSearches(next);
-        return next;
-      });
+      rememberSearch(result);
 
       handleCollapse();
     },

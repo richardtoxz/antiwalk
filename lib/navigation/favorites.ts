@@ -1,56 +1,16 @@
 // Favorite lines and stations, kept on this device.
 import type { SearchSelection } from "@/lib/transport/types";
+import { createSelectionStore } from "./selection-store";
 
-const KEY = "antiwalk-favorites";
-const EVENT = "antiwalk-favorites";
-const MAX = 12;
+const store = createSelectionStore("antiwalk-favorites", 12);
 
-function isSelection(value: unknown): value is SearchSelection {
-  if (!value || typeof value !== "object") return false;
-  const item = value as Partial<SearchSelection>;
-  if (typeof item.id !== "string" || typeof item.title !== "string" || typeof item.subtitle !== "string") return false;
-  return (item.type === "line" && typeof item.shortName === "string") || (item.type === "station" && typeof item.stationCode === "string");
-}
-
-let cache: { raw: string | null; list: SearchSelection[] } = { raw: null, list: [] };
-
-/** Stable snapshot for useSyncExternalStore: the same array until the stored value changes. */
-export function readFavorites(): SearchSelection[] {
-  let raw: string | null = null;
-  try { raw = localStorage.getItem(KEY); } catch { return cache.list; }
-  if (raw === cache.raw) return cache.list;
-  let list: SearchSelection[] = [];
-  try {
-    const parsed: unknown = JSON.parse(raw ?? "[]");
-    list = Array.isArray(parsed) ? parsed.filter(isSelection).slice(0, MAX) : [];
-  } catch {
-    list = [];
-  }
-  cache = { raw, list };
-  return list;
-}
-
-const EMPTY: SearchSelection[] = [];
-export const readFavoritesOnServer = () => EMPTY;
-
-export function subscribeFavorites(notify: () => void) {
-  window.addEventListener(EVENT, notify);
-  window.addEventListener("storage", notify);
-  return () => {
-    window.removeEventListener(EVENT, notify);
-    window.removeEventListener("storage", notify);
-  };
-}
+export const readFavorites = store.read;
+export const readFavoritesOnServer = store.readOnServer;
+export const subscribeFavorites = store.subscribe;
 
 export function toggleFavorite(item: SearchSelection) {
-  const current = readFavorites();
-  const next = current.some((f) => f.id === item.id) ? current.filter((f) => f.id !== item.id) : [item, ...current].slice(0, MAX);
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    return;
-  }
-  window.dispatchEvent(new Event(EVENT));
+  const current = store.read();
+  store.write(current.some((f) => f.id === item.id) ? current.filter((f) => f.id !== item.id) : [item, ...current]);
 }
 
 export function lineSelection(shortName: string, longName?: string): SearchSelection {

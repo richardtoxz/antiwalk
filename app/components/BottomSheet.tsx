@@ -5,6 +5,7 @@ import {
   useEffect,
   useCallback,
   useState,
+  useSyncExternalStore,
   type PointerEvent,
   type TouchEvent,
 } from "react";
@@ -21,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { lineSelection, stationSelection } from "@/lib/navigation/favorites";
+import { recentsStore } from "@/lib/navigation/selection-store";
 import { cn } from "@/lib/utils";
 import ArrivalPanel from './ArrivalPanel';
 import { positionQuality } from '@/lib/transport/quality';
@@ -35,8 +37,6 @@ import type {
   SocketConnectionState,
 } from "@/lib/transport/types";
 
-const RECENTS_STORAGE_KEY = "transporte-df-recent-searches";
-
 // Black or white, whichever reads better on the operator color.
 function readableOn(hex?: string | null): string {
   const match = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
@@ -44,18 +44,6 @@ function readableOn(hex?: string | null): string {
   const value = parseInt(match[1], 16);
   const luminance = (0.299 * (value >> 16) + 0.587 * ((value >> 8) & 255) + 0.114 * (value & 255)) / 255;
   return luminance > 0.6 ? "#000000" : "#FFFFFF";
-}
-
-function readRecents(): SearchSelection[] {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(RECENTS_STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is SearchSelection =>
-      Boolean(item) && typeof item.id === "string" && typeof item.title === "string" && (item.type === "line" || item.type === "station")
-    ).slice(0, 5);
-  } catch {
-    return [];
-  }
 }
 
 const SNAP_POINTS = {
@@ -475,13 +463,9 @@ export default function BottomSheet({
   const sheetHeight = isDesktop ? undefined : `${heightPercent}dvh`;
   const lineColor = currentRouteData?.route.color ?? "var(--muted)";
   const freshCount = busVehicles.filter((v) => positionQuality(v, now) === "fresh").length;
-  const nothingSelected = selectedLines.length === 0 && !selectedStationCode;
 
-  // Recent searches are written by the search field; re-read them whenever the home view shows.
-  const [recents, setRecents] = useState<SearchSelection[]>([]);
-  useEffect(() => {
-    if (nothingSelected) setRecents(readRecents());
-  }, [nothingSelected]);
+  // Recent searches are written by the search field.
+  const recents = useSyncExternalStore(recentsStore.subscribe, recentsStore.read, recentsStore.readOnServer).slice(0, 5);
 
   return (
     <div
