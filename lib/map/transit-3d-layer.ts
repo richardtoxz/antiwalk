@@ -17,6 +17,13 @@ export interface Transit3DLayer extends CustomLayerInterface {
 /** Zoom from which the 3D stops appear; below it they would be a few pixels wide. */
 export const STOPS_3D_MIN_ZOOM = 15;
 const RAD = Math.PI / 180;
+const EARTH_CIRCUMFERENCE_M = 40075016.686;
+/** Length of the bus model, in meters. */
+const BUS_LENGTH_M = 12.7;
+/** Shortest the bus may look on screen, in CSS pixels. */
+const BUS_MIN_SCREEN_PX = 52;
+/** Scale when zoomed in close: slightly larger than life, like ride-hailing apps draw cars. */
+const BUS_MIN_SCALE = 1.6;
 
 type OperatorEntry = { apiColor: string; name: string; area: number };
 
@@ -181,8 +188,10 @@ export function createTransit3DLayer(id: string): Transit3DLayer {
       const origin = MercatorCoordinate.fromLngLat(center, 0);
       const meter = origin.meterInMercatorCoordinateUnits();
       const zoom = map.getZoom();
-      // Buses are drawn larger than life when zoomed out, so they stay readable.
-      const exaggeration = Math.min(6, Math.max(1.6, Math.pow(2, 17.2 - zoom)));
+      // A bus is never shorter than BUS_MIN_SCREEN_PX on screen, so it is easy to spot from afar;
+      // up close it settles at a little above life size.
+      const metersPerPixel = (EARTH_CIRCUMFERENCE_M * Math.cos(center.lat * RAD)) / (512 * Math.pow(2, zoom));
+      const exaggeration = Math.max(BUS_MIN_SCALE, (BUS_MIN_SCREEN_PX * metersPerPixel) / BUS_LENGTH_M);
 
       for (const { object, data } of buses.values()) {
         place(object, data.lng, data.lat, origin, meter, (90 - data.heading) * RAD, exaggeration);

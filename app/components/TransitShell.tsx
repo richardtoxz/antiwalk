@@ -812,7 +812,8 @@ export default function TransitShell() {
               "icon-pitch-alignment": "map",
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
-              "icon-size": ["interpolate", ["linear"], ["zoom"], 11, 0.5, 14, 0.8, 17, 1.35],
+              // Large enough to find from afar, growing a little as the map zooms in.
+              "icon-size": ["interpolate", ["linear"], ["zoom"], 10, 0.9, 14, 1, 17, 1.4],
             },
             paint: {
               "icon-opacity": ["case", ["==", ["get", "quality"], "fresh"], 1, 0.5],
