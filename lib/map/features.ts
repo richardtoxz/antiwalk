@@ -80,7 +80,8 @@ export function createStopsFeatureCollection(
     );
 
     if (direction && direction.tripDetails) {
-      direction.tripDetails.stops.forEach((stop) => {
+      const stops = direction.tripDetails.stops;
+      stops.forEach((stop, index) => {
         features.push({
           type: "Feature",
           geometry: {
@@ -91,6 +92,8 @@ export function createStopsFeatureCollection(
             stopId: stop.stopId,
             name: stop.name,
             lineShortName: line,
+            // First and last stops stay on the map at every zoom.
+            isEdge: index === 0 || index === stops.length - 1,
             color: routeData.route.color ?? "#F5A300",
           },
         });

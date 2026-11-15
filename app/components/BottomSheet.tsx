@@ -25,6 +25,7 @@ import { lineSelection, stationSelection } from "@/lib/navigation/favorites";
 import { recentsStore } from "@/lib/navigation/selection-store";
 import { cn } from "@/lib/utils";
 import ArrivalPanel from './ArrivalPanel';
+import ConnectionBanner, { useConnection } from './ConnectionBanner';
 import { positionQuality } from '@/lib/transport/quality';
 import type {
   BusRouteDetailsResponse,
@@ -212,6 +213,13 @@ export default function BottomSheet({
   onShare,
 }: BottomSheetProps) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
+  // While the API is unreachable, one banner explains it; the views avoid repeating the error.
+  const disconnected = useConnection().status !== "online";
+  // The full stop list is collapsed by default and opens on request, per line and direction.
+  const [expandedStops, setExpandedStops] = useState<string | null>(null);
+  const stopListKey = `${focusedLine}:${focusedLine ? lineDirections[focusedLine] ?? 0 : 0}`;
+  const showAllStops = expandedStops === stopListKey;
+  const setShowAllStops = (open: boolean) => setExpandedStops(open ? stopListKey : null);
   const share = async () => {
     if (!onShare) return;
     const result = await onShare();
@@ -535,6 +543,8 @@ export default function BottomSheet({
           maxHeight: isDesktop ? undefined : `calc(${heightPercent}dvh - 60px)`,
         }}
       >
+        <ConnectionBanner />
+
         {(selectedLines.length > 0 || selectedStationCode) && (
           <div className="mb-4 flex items-center gap-1.5 overflow-x-auto scrollbar-none select-none">
             {selectedStationCode && (
@@ -659,10 +669,12 @@ export default function BottomSheet({
                 </p>
               </fieldset>
             )}
-            <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-              <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
-              {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
-            </p>
+            {!disconnected && (
+              <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
+                {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
+              </p>
+            )}
           </div>
         )}
 
@@ -678,7 +690,7 @@ export default function BottomSheet({
               </span>
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold leading-snug">
-                  {currentRouteData?.route.longName ?? "Carregando itinerário…"}
+                  {currentRouteData?.route.longName ?? (busError || disconnected ? "Itinerário indisponível no momento" : "Carregando itinerário…")}
                 </h2>
                 {currentRouteData?.route.price ? (
                   <p className="text-xs text-muted-foreground">Tarifa R$ {currentRouteData.route.price.toFixed(2).replace(".", ",")}</p>
@@ -711,8 +723,8 @@ export default function BottomSheet({
 
             <p role="status" className="mt-3 flex flex-wrap items-center gap-x-2 text-sm">
               <span className={cn("h-2 w-2 shrink-0 rounded-full", freshCount > 0 ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
-              <span className="font-medium">{freshCount > 0 ? `${freshCount} ônibus ao vivo` : dataLabels[busDataQuality]}</span>
-              <span className="text-muted-foreground">{formatTimeAgo(busLastUpdate, now)}</span>
+              <span className="font-medium">{freshCount > 0 ? `${freshCount} ônibus ao vivo` : disconnected ? "Posições ao vivo indisponíveis" : dataLabels[busDataQuality]}</span>
+              {(!disconnected || busLastUpdate) && <span className="text-muted-foreground">{formatTimeAgo(busLastUpdate, now)}</span>}
             </p>
             {isRealtimeFallback && (
               <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">Conexão ao vivo interrompida. Consultando as posições a cada 15 segundos.</p>
@@ -733,7 +745,7 @@ export default function BottomSheet({
               </p>
             )}
 
-            {busError && (
+            {busError && !disconnected && (
               <div role="alert" className="mt-4 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
                 <p className="flex items-start gap-2">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
@@ -757,6 +769,26 @@ export default function BottomSheet({
                   {routeStops.map((stop, index) => {
                     const isEdge = index === 0 || index === routeStops.length - 1;
                     const isSelected = stop.stopId === selectedStopId;
+                    // Collapsed: the first and last stops, the chosen one, and one "N stops" row per gap.
+                    if (!showAllStops && !isEdge && !isSelected) {
+                      const previousShown = index - 1 === 0 || routeStops[index - 1]?.stopId === selectedStopId;
+                      if (!previousShown) return null;
+                      let hidden = 0;
+                      for (let i = index; i < routeStops.length - 1 && routeStops[i].stopId !== selectedStopId; i++) hidden++;
+                      return (
+                        <li key={`gap:${index}`} className="relative pl-6">
+                          <span className="absolute left-[2px] top-[18px] h-2 w-2 rounded-full" style={{ backgroundColor: lineColor }} aria-hidden />
+                          <button
+                            type="button"
+                            onClick={() => setShowAllStops(true)}
+                            className="flex min-h-12 w-full items-center gap-2 border-b border-border text-left text-sm text-muted-foreground hover:text-foreground"
+                          >
+                            <span className="flex-1">{hidden === 1 ? "Mais 1 parada" : `Mais ${hidden} paradas`}</span>
+                            <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+                          </button>
+                        </li>
+                      );
+                    }
                     return (
                       <li key={`${stop.stopId}:${index}`} className="relative pl-6">
                         <span
@@ -778,6 +810,11 @@ export default function BottomSheet({
                     );
                   })}
                 </ol>
+                {showAllStops && routeStops.length > 4 && (
+                  <button type="button" onClick={() => setShowAllStops(false)} className="mt-1 min-h-11 text-sm font-medium text-muted-foreground hover:text-foreground">
+                    Mostrar menos
+                  </button>
+                )}
               </section>
             )}
           </div>
@@ -821,7 +858,7 @@ export default function BottomSheet({
 
             <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
               <Radio className="h-3.5 w-3.5" aria-hidden />
-              {getRealtimeModeLabel(metroRealtimeMode)}
+              {disconnected ? "Previsões ao vivo indisponíveis" : getRealtimeModeLabel(metroRealtimeMode)}
             </p>
 
             {isMetroLoading && (
@@ -831,7 +868,7 @@ export default function BottomSheet({
               </p>
             )}
 
-            {metroError && (
+            {metroError && !disconnected && (
               <p role="alert" className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                 <span>{metroError}</span>

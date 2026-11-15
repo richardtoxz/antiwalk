@@ -5,6 +5,7 @@ import { ArrowDownUp, ArrowLeft, Bus, ChevronRight, Footprints, Loader2, MapPin,
 import { getJourneys, getPlaces, getLocationServices, localTime, type Place, type JourneyOption } from '@/lib/transport/journeys';
 import { getErrorMessage } from '@/lib/transport/hooks';
 import { usePageVisible, useVisibleClock } from '@/lib/transport/visibility';
+import { useConnection } from './ConnectionBanner';
 
 function PlacePicker({ label, value, onChange, onMap, addressesEnabled }: { label: string; value: Place | null; onChange: (place: Place | null) => void; onMap: () => void; addressesEnabled: boolean }) {
   const [text, setText] = useState(value?.name || '');
@@ -83,6 +84,7 @@ export default function JourneyPanel({ origin, destination, onOrigin, onDestinat
   const options = [...(query.data?.options || [])].sort((a, b) => sort === 'walking' ? a.walkMeters - b.walkMeters : sort === 'transfers' ? a.transfers - b.transfers : a.durationMinutes - b.durationMinutes);
   const current = request && origin && destination && request.origin.lat === origin.lat && request.origin.lng === origin.lng && request.destination.lat === destination.lat && request.destination.lng === destination.lng && request.walk === maxWalk;
   const addressesEnabled = Boolean(services.data?.addresses);
+  const disconnected = useConnection().status !== "online";
   const transferLabel = (count: number) => count === 0 ? 'Sem troca' : count === 1 ? '1 troca' : `${count} trocas`;
   const usesGeoapify = addressesEnabled || options.some(option => option.legs.some(leg => leg.walkingRoute === 'geoapify'));
   return <div ref={dialog} role="dialog" aria-labelledby="journey-title"
@@ -102,6 +104,7 @@ export default function JourneyPanel({ origin, destination, onOrigin, onDestinat
           <ArrowDownUp className="h-4 w-4" aria-hidden />
         </button>
       </div>
+      {disconnected && <p role="status" className="mt-3 rounded-lg bg-muted p-3 text-sm">O cálculo de rotas depende do servidor, que está sem conexão agora. Você pode escolher a origem e o destino no mapa; as opções aparecem quando a conexão voltar.</p>}
       {services.data?.addresses === false && <p className="mt-2 text-xs text-muted-foreground">A busca de endereços está indisponível. Paradas, estações e a escolha no mapa continuam funcionando.</p>}
 
       <fieldset className="mt-4">

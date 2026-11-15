@@ -8,6 +8,7 @@ import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pointAlong
 import { markSlow3D, readBusRenderMode, resolveUses3D, writeBusRenderMode, type BusRenderMode } from "@/lib/map/render-mode";
 import type { Transit3DLayer, Vehicle3D } from "@/lib/map/transit-3d-layer";
 import { readLinkTarget, writeLinkTarget } from "@/lib/navigation/share-link";
+import { BACKEND_BACK_EVENT } from "@/lib/transport/connection";
 import { lineSelection, readFavorites, readFavoritesOnServer, stationSelection, subscribeFavorites, toggleFavorite } from "@/lib/navigation/favorites";
 
 import type * as GeoJSON from "geojson";
@@ -63,6 +64,10 @@ import {
   type RawTrainArrival,
 } from "@/lib/transport/metro-data";
 
+const STOPS_EDGE_LAYER_ID = "bus-stops-edge-layer";
+/** Zoom from which every stop of the open line is drawn. */
+const STOPS_MIN_ZOOM = 14;
+
 const JourneyPanel = lazy(() => import('./JourneyPanel'));
 
 const TRANSIT_3D_LAYER_ID = "transit-3d-layer";
@@ -81,6 +86,12 @@ function setVehicleIconsHidden(map: maplibregl.Map, hidden: boolean) {
 
 export default function TransitShell() {
   const queryClient = useQueryClient();
+  // When the API is reachable again, refresh everything that may have failed meanwhile.
+  useEffect(() => {
+    const refresh = () => { void queryClient.invalidateQueries(); };
+    window.addEventListener(BACKEND_BACK_EVENT, refresh);
+    return () => window.removeEventListener(BACKEND_BACK_EVENT, refresh);
+  }, [queryClient]);
   const { resolvedTheme } = useTheme();
   const visible = usePageVisible();
   const now = useVisibleClock();
@@ -513,20 +524,41 @@ export default function TransitShell() {
           ]);
         }
 
+        // Terminals are always shown; the stops in between appear only once the map is close
+        // enough for them to mean something, like transit apps do.
+        if (!mapInstance.getLayer(STOPS_EDGE_LAYER_ID)) {
+          mapInstance.addLayer({
+            id: STOPS_EDGE_LAYER_ID,
+            type: "circle",
+            source: STOPS_SOURCE_ID,
+            filter: ["==", ["get", "isEdge"], true],
+            maxzoom: STOPS_MIN_ZOOM,
+            paint: {
+              "circle-radius": 5,
+              "circle-color": ["get", "color"],
+              "circle-stroke-width": 2,
+              "circle-stroke-color": "#ffffff",
+            },
+          });
+        }
+        if (mapInstance.getLayer(STOPS_LAYER_ID) && mapInstance.getLayer(STOPS_LAYER_ID)?.minzoom !== STOPS_MIN_ZOOM) {
+          mapInstance.removeLayer(STOPS_LAYER_ID);
+        }
         if (!mapInstance.getLayer(STOPS_LAYER_ID)) {
           mapInstance.addLayer({
             id: STOPS_LAYER_ID,
             type: "circle",
             source: STOPS_SOURCE_ID,
+            minzoom: STOPS_MIN_ZOOM,
             paint: {
-              "circle-radius": 3.5,
-              "circle-color": "#ffffff",
-              "circle-stroke-width": 2,
-              "circle-stroke-color": ["get", "color"],
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], STOPS_MIN_ZOOM, ["case", ["get", "isEdge"], 5, 2.5], 17, ["case", ["get", "isEdge"], 6.5, 5]],
+              "circle-color": ["case", ["get", "isEdge"], ["get", "color"], "#ffffff"],
+              "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], STOPS_MIN_ZOOM, 1.5, 17, 2],
+              "circle-stroke-color": ["case", ["get", "isEdge"], "#ffffff", ["get", "color"]],
             },
           });
         } else {
-          mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-stroke-color", ["get", "color"]);
+          mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-stroke-color", ["case", ["get", "isEdge"], "#ffffff", ["get", "color"]]);
         }
       });
     };
