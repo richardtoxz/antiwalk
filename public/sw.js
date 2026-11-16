@@ -23,6 +23,8 @@ async function navigation(request) {
   const timer = setTimeout(() => controller.abort(), 4000);
   try {
     const response = await fetch(request, { signal: controller.signal });
+    // A proxy or CDN answers 5xx when the server behind it is down: the saved copy is better then.
+    if (response.status >= 500) return (await cache.match('/')) || response;
     await save(cache, '/', response);
     return response;
   } catch {
