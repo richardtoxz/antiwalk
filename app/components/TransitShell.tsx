@@ -599,8 +599,9 @@ export default function TransitShell() {
   }, [mapInstance, routeLineFeatures, routeStopsFeatures]);
 
   // Bring the chosen stop into view and highlight it.
-  const stopsRef = useRef(routeStopsFeatures);
-  useEffect(() => { stopsRef.current = routeStopsFeatures; }, [routeStopsFeatures]);
+  const flownToStop = useRef<number | null>(null);
+  const selectedStopIdRef = useRef(selectedStopId);
+  useEffect(() => { selectedStopIdRef.current = selectedStopId; }, [selectedStopId]);
   useEffect(() => {
     if (!mapInstance) return;
     const selected: ExpressionSpecification = ["==", ["to-number", ["get", "stopId"]], selectedStopId ?? -1];
@@ -608,9 +609,11 @@ export default function TransitShell() {
       mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-radius", ["interpolate", ["linear"], ["zoom"], STOPS_MIN_ZOOM, ["case", selected, 7, ["get", "isEdge"], 5, 2.5], 17, ["case", selected, 9, ["get", "isEdge"], 6.5, 5]]);
       mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-color", ["case", selected, "#F5A300", ["get", "isEdge"], ["get", "color"], "#ffffff"]);
     }
-    if (selectedStopId == null) return;
-    const stop = stopsRef.current.features.find((f) => Number(f.properties?.stopId) === selectedStopId);
+    if (selectedStopId == null) { flownToStop.current = null; return; }
+    if (flownToStop.current === selectedStopId) return;
+    const stop = routeStopsFeatures.features.find((f) => Number(f.properties?.stopId) === selectedStopId);
     if (!stop) return;
+    flownToStop.current = selectedStopId;
     // Shift the target so it lands in the middle of the visible area, without changing the map's padding.
     const pad = visibleMapPadding(true);
     mapInstance.easeTo({
@@ -619,11 +622,11 @@ export default function TransitShell() {
       offset: [(pad.left - pad.right) / 2, (pad.top - pad.bottom) / 2],
       duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 600,
     });
-  }, [mapInstance, selectedStopId]);
+  }, [mapInstance, selectedStopId, routeStopsFeatures]);
 
   // Fit map bounds to the focused line's route geometry when it changes
   useEffect(() => {
-    if (!mapInstance || !focusedLine || journey) return;
+    if (!mapInstance || !focusedLine || journey || selectedStopIdRef.current != null) return;
 
     const routeData = activeBusRoutesData[focusedLine];
     if (!routeData) return;
@@ -1163,6 +1166,8 @@ export default function TransitShell() {
   }, [clearMetroWatchdog]);
 
   const handleResultSelect = useCallback((result: SearchSelection) => {
+    // A stop chosen on a previous line does not carry over.
+    setSelectedStopId(null);
     if (result.type === "station") {
       setSelectedStationCode(result.stationCode);
       setFocusedLine(null);
@@ -1223,6 +1228,15 @@ export default function TransitShell() {
   }, [focusedLine, selectedStationCode, lineDirections]);
 
   const favorites = useSyncExternalStore(subscribeFavorites, readFavorites, readFavoritesOnServer);
+
+  // From "Perto de você": open a line already pointed at the stop the person is near.
+  const openLineAtStop = useCallback((line: string, stopId?: number) => {
+    handleResultSelect(lineSelection(line));
+    setSelectedStopId(stopId ?? null);
+  }, [handleResultSelect]);
+  const openStation = useCallback((code: string, name: string) => {
+    handleResultSelect(stationSelection(code, name));
+  }, [handleResultSelect]);
 
   const shareCurrentView = useCallback(async (): Promise<"shared" | "copied" | "failed"> => {
     const url = window.location.href;
@@ -1379,6 +1393,8 @@ export default function TransitShell() {
           favorites={favorites}
           onToggleFavorite={toggleFavorite}
           onShare={shareCurrentView}
+          onOpenNearbyLine={openLineAtStop}
+          onOpenNearbyStation={openStation}
           hasCachedRoutes={Object.values(staleRoutes).some(Boolean)}
         />
       </div>

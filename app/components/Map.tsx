@@ -10,8 +10,9 @@ import bundledWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url
 // In development the worker is served untouched by the maplibre-worker-dev plugin (vite.config.ts),
 // because Vite's dev transform adds code that needs a document. Builds use the bundled worker.
 const maplibreWorkerUrl = import.meta.env.DEV ? "/__maplibre/maplibre-gl-worker.mjs" : bundledWorkerUrl;
-import { Protocol } from "pmtiles";
-import { buildMapStyle } from "@/lib/map/style";
+import { PMTiles, Protocol } from "pmtiles";
+import { CachedSource, createIndexedDbByteStore, type ByteStore } from "@/lib/map/cached-source";
+import { buildMapStyle, mapTilesAbsoluteUrl } from "@/lib/map/style";
 import { BUS_ICON_PREFIX, drawBusIcon } from "@/lib/map/bus-icon";
 import { useTheme } from "./ThemeProvider";
 
@@ -20,7 +21,17 @@ import { useTheme } from "./ThemeProvider";
 let pmtilesRegistered = false;
 function registerPmtiles() {
   if (pmtilesRegistered) return;
-  maplibregl.addProtocol("pmtiles", new Protocol().tile);
+  const protocol = new Protocol();
+  // Map areas already seen are kept on the device, so the map still draws without a connection.
+  const storeReady = createIndexedDbByteStore().catch(() => null);
+  const store: ByteStore = {
+    get: async (key) => (await storeReady)?.get(key),
+    set: async (key, value) => { await (await storeReady)?.set(key, value); },
+    clear: async () => { await (await storeReady)?.clear(); },
+  };
+  const url = mapTilesAbsoluteUrl();
+  protocol.add(new PMTiles(new CachedSource(url, store)));
+  maplibregl.addProtocol("pmtiles", protocol.tile);
   pmtilesRegistered = true;
 }
 

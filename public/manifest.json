@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Transporte DF - Horários e Rotas",
-  "short_name": "Transporte DF",
+  "name": "Antiwalk - Ônibus e metrô do DF",
+  "short_name": "Antiwalk",
   "description": "Aplicativo de transporte público do Distrito Federal. Encontre linhas de ônibus, estações de metrô e horários em tempo real.",
   "lang": "pt-BR",
   "dir": "ltr",

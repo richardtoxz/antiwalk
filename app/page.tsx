@@ -1,7 +1,7 @@
 import TransitShell from "./components/TransitShell";
 
 export const metadata = {
-  title: "Transporte DF - Encontre linhas e estações",
+  title: "Antiwalk - Ônibus e metrô do DF em tempo real",
   description:
     "Aplicativo de transporte público do Distrito Federal. Encontre linhas de ônibus, estações de metrô e planeje suas rotas.",
 };

@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import ArrivalPanel from './ArrivalPanel';
 import ConnectionBanner, { useConnection } from './ConnectionBanner';
 import InstallApp from './InstallApp';
+import NearbyPanel from './NearbyPanel';
 import { positionQuality } from '@/lib/transport/quality';
 import type {
   BusRouteDetailsResponse,
@@ -96,6 +97,8 @@ interface BottomSheetProps {
   favorites?: SearchSelection[];
   onToggleFavorite?: (item: SearchSelection) => void;
   onShare?: () => Promise<"shared" | "copied" | "failed">;
+  onOpenNearbyLine?: (line: string, stopId?: number) => void;
+  onOpenNearbyStation?: (code: string, name: string) => void;
 }
 
 function getSnapPointFromHeight(heightPercent: number): SnapPoint {
@@ -212,6 +215,8 @@ export default function BottomSheet({
   favorites = [],
   onToggleFavorite,
   onShare,
+  onOpenNearbyLine,
+  onOpenNearbyStation,
 }: BottomSheetProps) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   // While the API is unreachable, one banner explains it; the views avoid repeating the error.
@@ -616,6 +621,10 @@ export default function BottomSheet({
               Busque uma linha ou estação no campo acima, ou trace uma rota entre dois lugares.
             </p>
 
+            {onOpenNearbyLine && onOpenNearbyStation && (
+              <NearbyPanel onOpenLine={onOpenNearbyLine} onOpenStation={onOpenNearbyStation} />
+            )}
+
             {favorites.length > 0 && (
               <section className="mt-5" aria-label="Favoritos">
                 <h3 className="text-xs font-medium text-muted-foreground">Favoritos</h3>
@@ -665,8 +674,19 @@ export default function BottomSheet({
               <span className="flex-1 font-medium">Metrô</span>
               <span className="text-right text-muted-foreground">{formatMetroOperation(metroStatus)}</span>
             </div>
+            {!disconnected && (
+              <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
+                {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
+              </p>
+            )}
             {onBusModeChange && (
-              <fieldset className="mt-4 border-t border-border pt-3">
+              <details className="group mt-4 border-t border-border">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-medium [&::-webkit-details-marker]:hidden">
+                  Ajustes
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden />
+                </summary>
+              <fieldset className="pb-2">
                 <legend className="sr-only">Ônibus no mapa</legend>
                 <p className="text-sm font-medium" aria-hidden>Ônibus no mapa</p>
                 <div className="mt-2 grid grid-cols-3 gap-1.5">
@@ -695,12 +715,7 @@ export default function BottomSheet({
                         : "Usando ícones leves neste aparelho."}
                 </p>
               </fieldset>
-            )}
-            {!disconnected && (
-              <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
-                {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
-              </p>
+              </details>
             )}
           </div>
         )}

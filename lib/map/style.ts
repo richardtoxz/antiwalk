@@ -6,6 +6,11 @@ export const MAP_TILES_URL = process.env.NEXT_PUBLIC_MAP_TILES_URL || "/map/df.p
 // Fonts and icons published by the Protomaps basemaps project.
 const MAP_ASSETS_URL = "https://protomaps.github.io/basemaps-assets";
 
+/** Absolute address of the tile archive; also the key the PMTiles protocol uses for it. */
+export function mapTilesAbsoluteUrl(): string {
+  return new URL(MAP_TILES_URL, window.location.href).href;
+}
+
 export type MapTheme = "light" | "dark";
 
 interface MapPalette {
@@ -46,7 +51,7 @@ function paletteFlavor(theme: MapTheme): Flavor {
 }
 
 export function buildMapStyle(theme: MapTheme): StyleSpecification {
-  const tilesUrl = new URL(MAP_TILES_URL, window.location.href).href;
+  const tilesUrl = mapTilesAbsoluteUrl();
   return {
     version: 8,
     glyphs: `${MAP_ASSETS_URL}/fonts/{fontstack}/{range}.pbf`,
