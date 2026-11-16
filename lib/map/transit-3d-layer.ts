@@ -191,7 +191,8 @@ export function createTransit3DLayer(id: string): Transit3DLayer {
       // A bus is never shorter than BUS_MIN_SCREEN_PX on screen, so it is easy to spot from afar;
       // up close it settles at a little above life size.
       const metersPerPixel = (EARTH_CIRCUMFERENCE_M * Math.cos(center.lat * RAD)) / (512 * Math.pow(2, zoom));
-      const exaggeration = Math.max(BUS_MIN_SCALE, (BUS_MIN_SCREEN_PX * metersPerPixel) / BUS_LENGTH_M);
+      const minScreenPx = Math.min(BUS_MIN_SCREEN_PX, Math.max(36, map.getCanvas().clientWidth * 0.12));
+      const exaggeration = Math.max(BUS_MIN_SCALE, (minScreenPx * metersPerPixel) / BUS_LENGTH_M);
 
       for (const { object, data } of buses.values()) {
         place(object, data.lng, data.lat, origin, meter, (90 - data.heading) * RAD, exaggeration);

@@ -2,7 +2,7 @@
 
 import { useQueryClient, useQueries } from "@tanstack/react-query";
 import * as maplibregl from "maplibre-gl";
-import type { GeoJSONSource } from "maplibre-gl";
+import type { ExpressionSpecification, GeoJSONSource } from "maplibre-gl";
 import { busIconId } from "@/lib/map/bus-icon";
 import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pointAlong, type LngLat } from "@/lib/map/vehicle-motion";
 import { markSlow3D, readBusRenderMode, resolveUses3D, writeBusRenderMode, type BusRenderMode } from "@/lib/map/render-mode";
@@ -67,6 +67,30 @@ import {
 const STOPS_EDGE_LAYER_ID = "bus-stops-edge-layer";
 /** Zoom from which every stop of the open line is drawn. */
 const STOPS_MIN_ZOOM = 14;
+
+/**
+ * Padding that keeps fitted content inside the visible map: beside the left column on wide
+ * screens, between the search field and the bottom sheet on phones.
+ */
+function visibleMapPadding(focusedSheet: boolean) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const sheet = document.querySelector("#bottom-sheet > div")?.getBoundingClientRect();
+  const search = document.querySelector("input[role=combobox]")?.closest(".fixed")?.getBoundingClientRect();
+  const padding = vw >= 768
+    ? { top: 48, right: 72, bottom: 48, left: (sheet?.right ?? 396) + 32 }
+    : {
+      top: (search?.bottom ?? 80) + 24,
+      right: 40,
+      // While a line is open the sheet rises to half the screen.
+      bottom: Math.max(sheet ? vh - sheet.top : 0, focusedSheet ? vh * 0.5 : vh * 0.15) + 24,
+      left: 40,
+    };
+  // Always leave a usable area; MapLibre refuses to fit into a negative box.
+  if (vw - padding.left - padding.right < 160) padding.left = Math.max(24, vw - padding.right - 160);
+  if (vh - padding.top - padding.bottom < 160) padding.bottom = Math.max(24, vh - padding.top - 160);
+  return padding;
+}
 
 const JourneyPanel = lazy(() => import('./JourneyPanel'));
 
@@ -574,6 +598,29 @@ export default function TransitShell() {
     };
   }, [mapInstance, routeLineFeatures, routeStopsFeatures]);
 
+  // Bring the chosen stop into view and highlight it.
+  const stopsRef = useRef(routeStopsFeatures);
+  useEffect(() => { stopsRef.current = routeStopsFeatures; }, [routeStopsFeatures]);
+  useEffect(() => {
+    if (!mapInstance) return;
+    const selected: ExpressionSpecification = ["==", ["to-number", ["get", "stopId"]], selectedStopId ?? -1];
+    if (mapInstance.getLayer(STOPS_LAYER_ID)) {
+      mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-radius", ["interpolate", ["linear"], ["zoom"], STOPS_MIN_ZOOM, ["case", selected, 7, ["get", "isEdge"], 5, 2.5], 17, ["case", selected, 9, ["get", "isEdge"], 6.5, 5]]);
+      mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-color", ["case", selected, "#F5A300", ["get", "isEdge"], ["get", "color"], "#ffffff"]);
+    }
+    if (selectedStopId == null) return;
+    const stop = stopsRef.current.features.find((f) => Number(f.properties?.stopId) === selectedStopId);
+    if (!stop) return;
+    // Shift the target so it lands in the middle of the visible area, without changing the map's padding.
+    const pad = visibleMapPadding(true);
+    mapInstance.easeTo({
+      center: stop.geometry.coordinates as [number, number],
+      zoom: Math.max(mapInstance.getZoom(), 15.5),
+      offset: [(pad.left - pad.right) / 2, (pad.top - pad.bottom) / 2],
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 600,
+    });
+  }, [mapInstance, selectedStopId]);
+
   // Fit map bounds to the focused line's route geometry when it changes
   useEffect(() => {
     if (!mapInstance || !focusedLine || journey) return;
@@ -601,14 +648,9 @@ export default function TransitShell() {
     );
 
     mapInstance.fitBounds(bounds, {
-      padding: {
-        top: 100,
-        right: 80,
-        bottom: 260,
-        left: 80,
-      },
+      padding: visibleMapPadding(true),
       maxZoom: 14,
-      duration: 700,
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 700,
     });
   }, [mapInstance, focusedLine, activeBusRoutesData, lineDirections, journey]);
 
@@ -1063,17 +1105,17 @@ export default function TransitShell() {
       if (feature) {
         const { id, linha, sentido, destino_final, minutesToArrival } = feature.properties;
         const etaText = minutesToArrival === 0 
-          ? `<span class="text-emerald-500 font-bold">Na estação</span>`
-          : `Chega em <span class="font-bold text-blue-600">${minutesToArrival} min</span>`;
+          ? `<span class="font-bold">Na estação</span>`
+          : `Chega em <span class="font-bold">${escapeHtml(Number(minutesToArrival))} min</span>`;
 
         new maplibregl.Popup({ closeButton: false })
           .setLngLat(e.lngLat)
           .setHTML(`
-            <div class="p-2 text-xs font-sans text-gray-800">
-              <div class="font-bold text-sm mb-1 text-gray-900">Trem ${escapeHtml(id)} (${escapeHtml(linha)})</div>
+            <div class="p-2 text-xs">
+              <div class="font-bold text-sm mb-1">Trem ${escapeHtml(id)} (${escapeHtml(linha)})</div>
               <div>Sentido: <span class="font-medium">${escapeHtml(sentido)}</span></div>
-              <div>Destino: <span class="font-medium text-gray-700">${escapeHtml(destino_final)}</span></div>
-              <div class="mt-1.5 pt-1 border-t border-gray-100">${etaText}</div>
+              <div>Destino: <span class="font-medium">${escapeHtml(destino_final)}</span></div>
+              <div class="mt-1.5 pt-1 border-t border-border">${etaText}</div>
               <div class="mt-1">Posição estimada pela previsão de chegada.</div>
             </div>
           `)
@@ -1255,7 +1297,7 @@ export default function TransitShell() {
     if (points.length && mapInstance) {
       const bounds = new maplibregl.LngLatBounds(points[0], points[0]);
       points.forEach(p => bounds.extend(p));
-      mapInstance.fitBounds(bounds, { padding: { top: 120, bottom: 180, left: 45, right: 45 }, maxZoom: 15,
+      mapInstance.fitBounds(bounds, { padding: visibleMapPadding(true), maxZoom: 15,
         duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 600 });
     }
   }, [mapInstance]);

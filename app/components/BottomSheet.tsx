@@ -249,6 +249,8 @@ export default function BottomSheet({
   );
   const sheetRef = useRef<HTMLDivElement>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint>("peek");
+  const currentSnapRef = useRef<SnapPoint>("peek");
+  useEffect(() => { currentSnapRef.current = currentSnap; }, [currentSnap]);
   const [isDragging, setIsDragging] = useState(false);
   const [heightPercent, setHeightPercent] = useState<number>(SNAP_POINTS.peek);
 
@@ -455,6 +457,28 @@ export default function BottomSheet({
     },
     [currentSnap, animateToSnap, isDesktop]
   );
+
+  // Choosing something to look at raises a collapsed sheet on phones, so its details show right away.
+  const selectionKey = `${focusedLine ?? ""}|${selectedStationCode ?? ""}|${selectedStopId ?? ""}`;
+  const lastSelection = useRef(selectionKey);
+  useEffect(() => {
+    if (selectionKey === lastSelection.current) return;
+    lastSelection.current = selectionKey;
+    if (selectionKey === "||" || isDesktop) return;
+    const frame = requestAnimationFrame(() => {
+      if (currentSnapRef.current === "peek" || currentSnapRef.current === "closed") animateToSnap("half");
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectionKey, isDesktop, animateToSnap]);
+
+  // A stop chosen on the map scrolls into view in the list.
+  useEffect(() => {
+    if (selectedStopId == null) return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(`[data-stop-id="${selectedStopId}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedStopId]);
 
   useEffect(() => {
     if (currentSnap === "full" && !isDesktop) {
@@ -689,7 +713,7 @@ export default function BottomSheet({
                 {focusedLine}
               </span>
               <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold leading-snug">
+                <h2 className="line-clamp-2 text-base font-semibold leading-snug" title={currentRouteData?.route.longName}>
                   {currentRouteData?.route.longName ?? (busError || disconnected ? "Itinerário indisponível no momento" : "Carregando itinerário…")}
                 </h2>
                 {currentRouteData?.route.price ? (
@@ -790,7 +814,7 @@ export default function BottomSheet({
                       );
                     }
                     return (
-                      <li key={`${stop.stopId}:${index}`} className="relative pl-6">
+                      <li key={`${stop.stopId}:${index}`} className="relative pl-6" data-stop-id={stop.stopId}>
                         <span
                           className="absolute left-0 top-[18px] h-3 w-3 rounded-full border-2 bg-card"
                           style={{ borderColor: lineColor, backgroundColor: isEdge || isSelected ? lineColor : undefined }}

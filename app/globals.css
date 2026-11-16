@@ -196,8 +196,9 @@
   }
 }
 
+/* On phones the bottom sheet rests at 15dvh; controls and the map credit sit just above it. */
 .maplibregl-ctrl-bottom-right {
-  bottom: 80px !important;
+  bottom: calc(15dvh + 12px) !important;
   right: 12px !important;
 }
 
@@ -209,12 +210,13 @@
 }
 
 .maplibregl-ctrl-bottom-left {
-  bottom: 8px !important;
+  bottom: calc(15dvh + 8px) !important;
   left: 8px !important;
 }
 
 @media (min-width: 768px) {
   .maplibregl-ctrl-bottom-left {
+    bottom: 8px !important;
     left: 400px !important;
   }
 }
