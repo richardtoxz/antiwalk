@@ -39,8 +39,19 @@ interface DeviceHints {
   connection?: { saveData?: boolean };
 }
 
-/** Signals available before rendering anything. Browsers that do not report a value are not penalized. */
+let capability: boolean | null = null;
+
+/**
+ * Signals available before rendering anything. Browsers that do not report a value are not penalized.
+ * Computed once per page: each probe creates a WebGL context, and browsers keep only about 16 alive,
+ * dropping the oldest one (the map's) when that limit is passed.
+ */
 export function deviceLooksCapable(): boolean {
+  if (capability === null) capability = probeDevice();
+  return capability;
+}
+
+function probeDevice(): boolean {
   if (typeof window === "undefined") return false;
   const nav = navigator as Navigator & DeviceHints;
   if (nav.connection?.saveData) return false;
@@ -48,7 +59,10 @@ export function deviceLooksCapable(): boolean {
   if (nav.deviceMemory !== undefined && nav.deviceMemory < 4) return false;
   if (nav.hardwareConcurrency !== undefined && nav.hardwareConcurrency < 4) return false;
   try {
-    return Boolean(document.createElement("canvas").getContext("webgl2"));
+    const gl = document.createElement("canvas").getContext("webgl2");
+    // Free the probe context right away instead of waiting for garbage collection.
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    return Boolean(gl);
   } catch {
     return false;
   }
