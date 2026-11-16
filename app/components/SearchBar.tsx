@@ -201,7 +201,7 @@ export default function SearchBar({
           "fixed z-30 transition-all duration-300 ease-out",
           isExpanded
             ? "inset-x-0 top-0 mx-0 md:inset-x-auto md:left-4 md:top-4 md:w-[380px]"
-            : "top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md md:left-4 md:translate-x-0 md:w-[380px] md:max-w-none"
+            : "top-[max(1rem,env(safe-area-inset-top))] left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md md:left-4 md:translate-x-0 md:w-[380px] md:max-w-none"
         )}
       >
         <div

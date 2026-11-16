@@ -1202,6 +1202,8 @@ export default function TransitShell() {
     if (linkApplied.current) return;
     linkApplied.current = true;
     const target = readLinkTarget(window.location.search);
+    // App shortcut "Traçar rota".
+    if (new URLSearchParams(window.location.search).get("rota") === "1") setPlannerOpen(true);
     if (target.line) {
       handleResultSelect(lineSelection(target.line));
       if (target.direction !== undefined) setLineDirections((prev) => ({ ...prev, [target.line!]: target.direction! }));

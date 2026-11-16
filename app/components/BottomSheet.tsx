@@ -26,6 +26,7 @@ import { recentsStore } from "@/lib/navigation/selection-store";
 import { cn } from "@/lib/utils";
 import ArrivalPanel from './ArrivalPanel';
 import ConnectionBanner, { useConnection } from './ConnectionBanner';
+import InstallApp from './InstallApp';
 import { positionQuality } from '@/lib/transport/quality';
 import type {
   BusRouteDetailsResponse,
@@ -656,6 +657,8 @@ export default function BottomSheet({
                 </ul>
               </section>
             )}
+
+            <InstallApp />
 
             <div className="mt-5 flex items-center gap-3 border-t border-border pt-3 text-sm">
               <TrainFront className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />

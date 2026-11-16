@@ -1,17 +1,25 @@
 {
+  "id": "/",
   "name": "Transporte DF - Horários e Rotas",
   "short_name": "Transporte DF",
   "description": "Aplicativo de transporte público do Distrito Federal. Encontre linhas de ônibus, estações de metrô e horários em tempo real.",
+  "lang": "pt-BR",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "background_color": "#E9E4D8",
   "theme_color": "#000000",
   "orientation": "any",
   "categories": [
     "navigation",
-    "travel",
-    "public transit"
+    "travel"
   ],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/icon-192x192.png",
@@ -38,11 +46,13 @@
   "shortcuts": [
     {
       "name": "Traçar rota",
-      "url": "/",
+      "short_name": "Rota",
+      "url": "/?rota=1",
       "icons": [
         {
           "src": "/icon-192x192.png",
-          "sizes": "192x192"
+          "sizes": "192x192",
+          "type": "image/png"
         }
       ]
     }
