@@ -68,7 +68,9 @@ export function readInstallState(): InstallState {
   return snapshot;
 }
 
-export const readInstallStateOnServer = (): InstallState => ({ kind: "unavailable" });
+// The same object every time, as React requires for server snapshots.
+const UNAVAILABLE_ON_SERVER: InstallState = { kind: "unavailable" };
+export const readInstallStateOnServer = (): InstallState => UNAVAILABLE_ON_SERVER;
 
 export function subscribeInstallState(notify: () => void) {
   window.addEventListener(CHANGE, notify);
