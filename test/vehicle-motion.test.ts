@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pathLength, pointAlong, type LngLat } from '../lib/map/vehicle-motion.ts';
+import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pathLength, pointAlong, snapToRoute, type LngLat } from '../lib/map/vehicle-motion.ts';
 
 // A route in Brasília going east, then north (about 100 m per leg).
 const line: LngLat[] = [[-47.9000, -15.8000], [-47.8990, -15.8000], [-47.8990, -15.7990]];
@@ -54,4 +54,25 @@ test('easing stays within bounds', () => {
   assert.equal(easeOut(1), 1);
   assert.equal(easeOut(2), 1);
   assert.ok(easeOut(0.5) > 0.5);
+});
+
+test('a fix beside the route is moved onto it and takes the street direction', () => {
+  // About 12 m north of the eastbound leg, as GPS drift often reports.
+  const snap = snapToRoute(line, [-47.8995, -15.79989])!;
+  assert.ok(snap.distance > 10 && snap.distance < 14);
+  assert.ok(Math.abs(snap.point[1] - -15.8) < 1e-9);
+  assert.ok(Math.abs(snap.heading - 90) < 0.5);
+  assert.equal(snapToRoute(line, [-47.8950, -15.8050]), null);
+  assert.equal(snapToRoute([line[0]], line[0]), null);
+});
+
+test('on a street used both ways the bus stays on the pass it was following', () => {
+  // Out along a street and back on the same street, 6 m apart.
+  const outAndBack: LngLat[] = [[-47.9000, -15.8000], [-47.8980, -15.8000], [-47.8980, -15.80005], [-47.9000, -15.80005]];
+  const fix: LngLat = [-47.8990, -15.80003];
+  const out = snapToRoute(outAndBack, fix, { previousAlong: 50 })!;
+  assert.ok(Math.abs(out.heading - 90) < 0.5);
+  const back = snapToRoute(outAndBack, fix, { previousAlong: 300 })!;
+  assert.ok(Math.abs(back.heading - 270) < 0.5);
+  assert.ok(back.along > out.along);
 });

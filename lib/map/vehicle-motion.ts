@@ -65,6 +65,71 @@ export function locateOnLine(line: LngLat[], p: LngLat): LinePosition | null {
   return best;
 }
 
+export interface RouteSnap {
+  /** The fix moved onto the route. */
+  point: LngLat;
+  /** Direction of travel of the route at that point, 0 = north. */
+  heading: number;
+  /** Distance along the route from its start, meters. */
+  along: number;
+  /** How far the fix was from the route, meters. */
+  distance: number;
+}
+
+/**
+ * Where a GPS fix sits on its route: the nearest point within `maxMeters`, and the
+ * direction the route runs there. GPS drifts a few meters sideways and the reported
+ * heading is often off, while the route is drawn along the street, so both come from
+ * the route. When the route passes the same place twice (loops, or a street used both
+ * ways), the pass that continues from `previousAlong` wins over the nearest one.
+ */
+export function snapToRoute(
+  line: LngLat[],
+  p: LngLat,
+  { maxMeters = 50, previousAlong }: { maxMeters?: number; previousAlong?: number } = {},
+): RouteSnap | null {
+  if (line.length < 2) return null;
+  // Best position of each stretch of route that comes within maxMeters of the fix.
+  const passes: (LinePosition & { heading: number })[] = [];
+  let pass: (LinePosition & { heading: number }) | null = null;
+  let walked = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    const a = line[i];
+    const b = line[i + 1];
+    const [bx, by] = offset(a, b);
+    const segment = Math.hypot(bx, by);
+    if (segment === 0) continue;
+    const [px, py] = offset(a, p);
+    const t = Math.max(0, Math.min(1, (px * bx + py * by) / (segment * segment)));
+    const distance = Math.hypot(px - t * bx, py - t * by);
+    if (distance <= maxMeters) {
+      if (!pass || distance < pass.distance) {
+        pass = {
+          index: i, t, distance, along: walked + t * segment,
+          point: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+          heading: bearing(a, b),
+        };
+      }
+    } else if (pass) {
+      passes.push(pass);
+      pass = null;
+    }
+    walked += segment;
+  }
+  if (pass) passes.push(pass);
+  if (!passes.length) return null;
+
+  // Without history the nearest pass wins. With it, going backwards costs a lot and
+  // jumping far ahead a little, so a bus keeps following the pass it was on.
+  const cost = (candidate: LinePosition) => {
+    if (previousAlong === undefined) return candidate.distance;
+    const progress = candidate.along - previousAlong;
+    return candidate.distance + (progress < -50 ? 1000 : Math.abs(progress) * 0.05);
+  };
+  const best = passes.reduce((a, b) => (cost(b) < cost(a) ? b : a));
+  return { point: best.point, heading: best.heading, along: best.along, distance: best.distance };
+}
+
 export interface PathOptions {
   /** Points farther than this from the line are not snapped to it. */
   maxSnapMeters?: number;

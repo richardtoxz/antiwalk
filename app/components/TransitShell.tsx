@@ -4,7 +4,7 @@ import { useQueryClient, useQueries } from "@tanstack/react-query";
 import * as maplibregl from "maplibre-gl";
 import type { ExpressionSpecification, GeoJSONSource } from "maplibre-gl";
 import { busIconId } from "@/lib/map/bus-icon";
-import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pointAlong, type LngLat } from "@/lib/map/vehicle-motion";
+import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pointAlong, snapToRoute, type LngLat } from "@/lib/map/vehicle-motion";
 import { markSlow3D, readBusRenderMode, resolveUses3D, writeBusRenderMode, type BusRenderMode } from "@/lib/map/render-mode";
 import type { Transit3DLayer, Vehicle3D } from "@/lib/map/transit-3d-layer";
 import { readLinkTarget, writeLinkTarget } from "@/lib/navigation/share-link";
@@ -296,7 +296,42 @@ export default function TransitShell() {
     return mapping;
   }, [activeBusRoutesData]);
 
-  // Filter vehicles by their trip's directionId matching user selection
+  // Route of each direction of every active line, as [lng, lat].
+  const directionLines = useMemo(() => {
+    const lines: Record<string, { directionId: number; line: LngLat[] }[]> = {};
+    Object.entries(activeBusRoutesData).forEach(([line, routeData]) => {
+      lines[line] = routeData.directions
+        .filter((d) => (d.tripDetails?.coordinates.length ?? 0) >= 2)
+        .map((d) => ({ directionId: d.directionId, line: d.tripDetails.coordinates.map(([lat, lng]) => [lng, lat] as LngLat) }));
+    });
+    return lines;
+  }, [activeBusRoutesData]);
+
+  // The provider sometimes keeps a bus on the trip it has just finished while it already
+  // runs the way back. A bus far from its trip's route but right on the other direction's
+  // route is shown in that direction. Computed when positions arrive, not every second.
+  const vehicleDirections = useMemo(() => {
+    const directions = new Map<string, number | undefined>();
+    Object.entries(busVehiclesByTrip).forEach(([key, vehicles]) => {
+      const lastColonIndex = key.lastIndexOf(":");
+      const line = key.slice(0, lastColonIndex);
+      const tripDirectionId = tripToDirectionMap[`${line}:${key.slice(lastColonIndex + 1)}`];
+      const shapes = directionLines[line] ?? [];
+      const own = shapes.find((s) => s.directionId === tripDirectionId);
+      for (const vehicle of vehicles) {
+        let directionId = tripDirectionId;
+        const point: LngLat = [vehicle.lng, vehicle.lat];
+        if (own && shapes.length > 1 && (locateOnLine(own.line, point)?.distance ?? 0) > 60) {
+          const other = shapes.find((s) => s !== own && (locateOnLine(s.line, point)?.distance ?? Infinity) <= 25);
+          if (other) directionId = other.directionId;
+        }
+        directions.set(`${key}:${vehicle.vehicleId}`, directionId);
+      }
+    });
+    return directions;
+  }, [busVehiclesByTrip, tripToDirectionMap, directionLines]);
+
+  // Filter vehicles by the direction they run, matching the user's selection
   const filteredBusVehicles = useMemo(() => {
     const list: (BusVehicle & { lineShortName: string; tripId: string | number })[] = [];
 
@@ -306,15 +341,15 @@ export default function TransitShell() {
       const tripId = key.slice(lastColonIndex + 1);
 
       const selectedDirectionId = lineDirections[line] ?? 0;
-      const directionId = tripToDirectionMap[`${line}:${tripId}`];
 
-      if (directionId === selectedDirectionId) {
-        list.push(...vehicles.filter(v => positionQuality(v, now) !== 'expired'));
+      for (const vehicle of vehicles) {
+        if (positionQuality(vehicle, now) === 'expired') continue;
+        if (vehicleDirections.get(`${line}:${tripId}:${vehicle.vehicleId}`) === selectedDirectionId) list.push(vehicle);
       }
     });
 
     return list;
-  }, [busVehiclesByTrip, lineDirections, tripToDirectionMap, now]);
+  }, [busVehiclesByTrip, lineDirections, vehicleDirections, now]);
 
   const routeLineFeatures = useMemo(
     () => createRouteLineFeatureCollection(activeBusRoutesData, lineDirections, staleRoutes),
@@ -327,7 +362,7 @@ export default function TransitShell() {
     if (!active) return;
     const vehicle = filteredBusVehicles.find(v => `${v.lineShortName}:${v.vehicleId}` === active.key);
     if (!vehicle) { active.popup.remove(); busPopupRef.current = null; return; }
-    active.popup.setLngLat([vehicle.lng, vehicle.lat]).setHTML(vehiclePopup(vehicle, now));
+    active.popup.setHTML(vehiclePopup(vehicle, now));
   }, [filteredBusVehicles, now]);
 
   const routeStopsFeatures = useMemo(
@@ -352,7 +387,8 @@ export default function TransitShell() {
   const transit3DRef = useRef<Transit3DLayer | null>(null);
 
   // Where each bus is drawn right now, so a new position animates from there.
-  const vehiclePositionsRef = useRef(new Map<string, { point: LngLat; heading: number }>());
+  // `along` is its progress on the drawn route, when it sits on it.
+  const vehiclePositionsRef = useRef(new Map<string, { point: LngLat; heading: number; along?: number }>());
   const lastVehicleFrameRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({ type: "FeatureCollection", features: [] });
   const stops3DRef = useRef<{ key: string; lng: number; lat: number; heading: number; name: string }[]>([]);
   const watchFrameRate = useRef(false);
@@ -943,22 +979,33 @@ export default function TransitShell() {
     const shown = vehiclePositionsRef.current;
     const plans = throttledBusVehicleFeatures.features.map((feature) => {
       const key = `${feature.properties?.lineShortName}:${feature.properties?.vehicleId}`;
-      const target = feature.geometry.coordinates as LngLat;
+      const line = routes.get(String(feature.properties?.lineShortName));
       const previous = shown.get(key);
+      // GPS drifts sideways and its heading is often off, so a bus near its route is drawn
+      // on it, facing the way the route runs. Far from it (garage, detour) it stays as reported.
+      const snap = line ? snapToRoute(line, feature.geometry.coordinates as LngLat, { previousAlong: previous?.along }) : null;
+      let target = snap?.point ?? (feature.geometry.coordinates as LngLat);
+      let finalHeading = snap?.heading ?? Number(feature.properties?.heading ?? 0);
+      let along = snap?.along;
+      // A fix slightly behind where the bus is drawn is GPS jitter: hold it rather than turn back.
+      if (snap && previous?.along !== undefined && snap.along < previous.along && previous.along - snap.along < 50) {
+        target = previous.point;
+        finalHeading = previous.heading;
+        along = previous.along;
+      }
       // New buses and long jumps appear in place instead of sweeping across the map.
       const path = !previous || reduceMotion || distanceMeters(previous.point, target) > 1500
         ? [target]
-        : pathBetween(routes.get(String(feature.properties?.lineShortName)), previous.point, target);
-      return { key, feature, path, startHeading: previous?.heading };
+        : pathBetween(line, previous.point, target);
+      return { key, feature, path, startHeading: previous?.heading, finalHeading, along };
     });
 
     const frame = (k: number): GeoJSON.FeatureCollection<GeoJSON.Point> => {
-      const next = new Map<string, { point: LngLat; heading: number }>();
-      const features = plans.map(({ key, feature, path, startHeading }) => {
-        const finalHeading = Number(feature.properties?.heading ?? 0);
+      const next = new Map<string, { point: LngLat; heading: number; along?: number }>();
+      const features = plans.map(({ key, feature, path, startHeading, finalHeading, along }) => {
         const at = pointAlong(path, k);
         const heading = k >= 1 ? finalHeading : at.heading ?? startHeading ?? finalHeading;
-        next.set(key, { point: at.point, heading });
+        next.set(key, { point: at.point, heading, along });
         return {
           ...feature,
           geometry: { type: "Point" as const, coordinates: at.point },
@@ -966,6 +1013,9 @@ export default function TransitShell() {
         };
       });
       vehiclePositionsRef.current = next;
+      const popup = busPopupRef.current;
+      const drawn = popup && next.get(popup.key);
+      if (drawn) popup.popup.setLngLat(drawn.point);
       const collection = { type: "FeatureCollection" as const, features };
       lastVehicleFrameRef.current = collection;
       return collection;
