@@ -14,10 +14,16 @@ export const VEHICLES_LAYER_ID = "bus-vehicles-layer";
 export function escapeHtml(value: unknown) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
-export function vehiclePopup(vehicle: BusVehicle & { lineShortName: string }, now: number) {
+/** Marks the popup button that starts a shared ride on the bus. */
+export const START_RIDE_ATTRIBUTE = "data-start-ride";
+
+export function vehiclePopup(vehicle: BusVehicle & { lineShortName: string }, now: number, { canStartRide = false }: { canStartRide?: boolean } = {}) {
   const delay = vehicle.delayMinutes;
   const status = delay == null ? 'Atraso não informado' : delay > 0 ? `${delay} min de atraso` : delay < 0 ? `${Math.abs(delay)} min adiantado` : 'No horário informado';
-  return `<div class="p-2 text-xs"><strong>Linha ${escapeHtml(vehicle.lineShortName)}</strong><div>Veículo: ${escapeHtml(vehicle.vehicleId)}</div><div>${escapeHtml(status)}</div><div>${escapeHtml(positionAgeLabel(vehicle, now))}</div>${positionQuality(vehicle, now) !== 'fresh' ? '<div>Posição sem confirmação recente.</div>' : ''}</div>`;
+  const ride = canStartRide
+    ? `<button type="button" ${START_RIDE_ATTRIBUTE} class="mt-2 min-h-11 w-full rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground">Estou neste ônibus</button>`
+    : '';
+  return `<div class="p-2 text-xs"><strong>Linha ${escapeHtml(vehicle.lineShortName)}</strong><div>Veículo: ${escapeHtml(vehicle.vehicleId)}</div><div>${escapeHtml(status)}</div><div>${escapeHtml(positionAgeLabel(vehicle, now))}</div>${positionQuality(vehicle, now) !== 'fresh' ? '<div>Posição sem confirmação recente.</div>' : ''}${ride}</div>`;
 }
 
 export function latLngToLngLat(lat: number, lng: number): [number, number] {

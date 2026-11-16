@@ -21,6 +21,7 @@ import {
   VEHICLES_LAYER_ID,
   escapeHtml,
   vehiclePopup,
+  START_RIDE_ATTRIBUTE,
   latLngToLngLat,
   createRouteLineFeatureCollection,
   createStopsFeatureCollection,
@@ -33,8 +34,10 @@ import { X } from 'lucide-react';
 import { positionQuality } from '@/lib/transport/quality';
 import { usePageVisible, useVisibleClock } from '@/lib/transport/visibility';
 import type { Place, JourneyOption } from '@/lib/transport/journeys';
+import { readOwnRide, readOwnRideOnServer, stopsAhead, subscribeOwnRide } from '@/lib/transport/rides';
 import BottomSheet from "./BottomSheet";
 import MapView from "./Map";
+import RidePanel, { type RideCandidate } from "./RidePanel";
 import SearchBar from "./SearchBar";
 import { useTheme } from "./ThemeProvider";
 import { getLineRoutes } from "@/lib/transport/bus";
@@ -67,6 +70,8 @@ import {
 const STOPS_EDGE_LAYER_ID = "bus-stops-edge-layer";
 /** Zoom from which every stop of the open line is drawn. */
 const STOPS_MIN_ZOOM = 14;
+// Below the search bar, which floats over the top of the map.
+const POPUP_TOP_MARGIN = 92;
 
 /**
  * Padding that keeps fitted content inside the visible map: beside the left column on wide
@@ -129,6 +134,12 @@ export default function TransitShell() {
   const [selectedStopId, setSelectedStopId] = useState<number | null>(null);
   const [routeOverrides, setRouteOverrides] = useState<Record<string, number>>({});
   const closePlanner = useCallback(() => setPlannerOpen(false), []);
+  // A bus the passenger said they are on, before the ride starts, and the ride this device shares.
+  const [rideCandidate, setRideCandidate] = useState<RideCandidate | null>(null);
+  const ownRide = useSyncExternalStore(subscribeOwnRide, readOwnRide, readOwnRideOnServer);
+  const closeRideCandidate = useCallback(() => setRideCandidate(null), []);
+  const canStartRideRef = useRef(false);
+  useEffect(() => { canStartRideRef.current = !ownRide; }, [ownRide]);
 
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
 
@@ -362,8 +373,32 @@ export default function TransitShell() {
     if (!active) return;
     const vehicle = filteredBusVehicles.find(v => `${v.lineShortName}:${v.vehicleId}` === active.key);
     if (!vehicle) { active.popup.remove(); busPopupRef.current = null; return; }
-    active.popup.setHTML(vehiclePopup(vehicle, now));
-  }, [filteredBusVehicles, now]);
+    active.popup.setHTML(vehiclePopup(vehicle, now, { canStartRide: !ownRide }));
+  }, [filteredBusVehicles, now, ownRide]);
+
+  // "Estou neste ônibus": the bus as the map shows it, on the trip of the direction it runs.
+  const openRideCandidate = useCallback((key: string) => {
+    const vehicle = vehiclesRef.current.find(v => `${v.lineShortName}:${v.vehicleId}` === key);
+    if (!vehicle) return;
+    const line = vehicle.lineShortName;
+    const routeData = activeBusRoutesData[line];
+    const directionId = lineDirections[line] ?? 0;
+    const direction = routeData?.directions.find(d => d.directionId === directionId);
+    // The bus's own trip when it runs this direction, else the direction's usual one.
+    const trip = routeData?.trips.find(t => String(t.tripId) === String(vehicle.tripId) && t.directionId === directionId && t.tripDetails)
+      ?? (direction?.tripDetails ? direction : null);
+    if (!routeData || !trip) return;
+    const shape = trip.tripDetails.coordinates.map(([lat, lng]) => [lng, lat] as LngLat);
+    setRideCandidate({
+      line, routeId: routeData.route.routeId, tripId: Number(trip.tripId), directionId,
+      vehicleId: String(vehicle.vehicleId),
+      headsign: trip.tripDetails.tripName || trip.tripDetails.stops.at(-1)?.name || (directionId === 0 ? "Ida" : "Volta"),
+      color: routeData.route.color ?? "#F5A300", textColor: routeData.route.textColor ?? "#000000",
+      stops: stopsAhead(shape, trip.tripDetails.stops, [vehicle.lng, vehicle.lat]),
+    });
+  }, [activeBusRoutesData, lineDirections]);
+  const openRideCandidateRef = useRef(openRideCandidate);
+  useEffect(() => { openRideCandidateRef.current = openRideCandidate; }, [openRideCandidate]);
 
   const routeStopsFeatures = useMemo(
     () => createStopsFeatureCollection(activeBusRoutesData, lineDirections),
@@ -1145,9 +1180,19 @@ export default function TransitShell() {
         const vehicle = vehiclesRef.current.find(v => `${v.lineShortName}:${v.vehicleId}` === key);
         if (!vehicle) return;
         busPopupRef.current?.popup.remove();
-        const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(vehiclePopup(vehicle, Date.now())).addTo(mapInstance);
+        const popup = new maplibregl.Popup().setLngLat(e.lngLat)
+          .setHTML(vehiclePopup(vehicle, Date.now(), { canStartRide: canStartRideRef.current })).addTo(mapInstance);
         busPopupRef.current = { popup, key };
         popup.on('close', () => { if (busPopupRef.current?.popup === popup) busPopupRef.current = null; });
+        // A popup opened near the top would sit under the search bar: move the map down to show it.
+        const top = popup.getElement()?.getBoundingClientRect().top;
+        if (top !== undefined && top < POPUP_TOP_MARGIN) mapInstance.panBy([0, top - POPUP_TOP_MARGIN], { duration: 300 });
+        // The popup's content is replaced as the bus moves, so its container listens.
+        popup.getElement()?.addEventListener('click', (event) => {
+          if (!(event.target instanceof Element) || !event.target.closest(`[${START_RIDE_ATTRIBUTE}]`)) return;
+          openRideCandidateRef.current(key);
+          popup.remove();
+        });
       }
     };
 
@@ -1259,11 +1304,16 @@ export default function TransitShell() {
     const target = readLinkTarget(window.location.search);
     // App shortcut "Traçar rota".
     if (new URLSearchParams(window.location.search).get("rota") === "1") setPlannerOpen(true);
+    const ride = readOwnRide();
     if (target.line) {
       handleResultSelect(lineSelection(target.line));
       if (target.direction !== undefined) setLineDirections((prev) => ({ ...prev, [target.line!]: target.direction! }));
     } else if (target.station) {
       handleResultSelect(stationSelection(target.station));
+    } else if (ride) {
+      // Back in the app during a shared ride: show the line of the bus being followed.
+      handleResultSelect(lineSelection(ride.line));
+      setLineDirections((prev) => ({ ...prev, [ride.line]: ride.directionId }));
     }
   }, [handleResultSelect]);
 
@@ -1391,7 +1441,10 @@ export default function TransitShell() {
       />
 
       {picking && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 flex items-center justify-between gap-2"><p className="text-sm">Toque no mapa para escolher {picking === 'origin' ? 'a origem' : 'o destino'}.</p><button type="button" className="h-11 w-11" aria-label="Cancelar seleção no mapa" onClick={() => { setPicking(null); setPlannerOpen(true); }}><X /></button></div>}
-      {journey && !picking && !plannerOpen && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 text-sm" role="status">
+      {(rideCandidate || ownRide) && !picking && (
+        <RidePanel candidate={rideCandidate} own={ownRide} now={now} onCloseCandidate={closeRideCandidate} />
+      )}
+      {journey && !picking && !plannerOpen && !rideCandidate && !ownRide && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 text-sm" role="status">
         <p className="font-semibold">Percurso de cerca de {journey.durationMinutes} min</p>
         <p className="mt-1 text-xs text-muted-foreground">{journey.legs.some(l => l.mode === 'walk' && l.walkingRoute !== 'geoapify') ? 'Há caminhadas aproximadas. Confira os acessos a pé.' : 'Tempos estimados. Os traçados do transporte são aproximados.'}</p>
         <div className="mt-2 flex gap-2">
