@@ -1,3 +1,4 @@
+import { reportReachable, reportUnreachable } from "./connection";
 import { BACKEND_WS_URL } from "./config";
 import type { SocketConnectionState } from "./types";
 
@@ -78,9 +79,12 @@ class TransportSocketClient {
 
     this.socket = new WebSocket(BACKEND_WS_URL);
 
+    let opened = false;
     this.socket.addEventListener("open", () => {
+      opened = true;
       this.reconnectAttempts = 0;
       this.setState("open");
+      reportReachable();
 
       for (const topic of this.topicListeners.keys()) {
         this.queueMessage({ action: "subscribe", topic });
@@ -111,6 +115,8 @@ class TransportSocketClient {
     });
 
     this.socket.addEventListener("close", () => {
+      // A socket that never opened means the server could not be reached.
+      if (!opened) reportUnreachable();
       this.setState("closed");
       this.socket = null;
       this.scheduleReconnect();

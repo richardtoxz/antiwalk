@@ -8,9 +8,9 @@ import {
   getLineRoutes,
   getRouteDetails,
   startRouteMonitoring,
-  getStopTimes,
 } from "./bus";
 import { HttpError, fetchJson } from "./http";
+import { BACKEND_BACK_EVENT } from "./connection";
 import { isUsableRouteCache } from "./quality";
 import { usePageVisible } from "./visibility";
 import type { BusRouteDetailsResponse } from "./types";
@@ -86,6 +86,7 @@ export function useStartRouteMonitorMutation() {
 
 export function getErrorMessage(error: unknown): string {
   if (error instanceof HttpError) {
+    if (error.status === 0) return "Sem conexão com o servidor. Tentando de novo automaticamente.";
     if (error.status === 404) {
       return "Não encontramos dados para esta consulta.";
     }
@@ -98,23 +99,9 @@ export function getErrorMessage(error: unknown): string {
     return "Não foi possível consultar os dados agora.";
   }
 
-  if (error instanceof Error) {
-    return error.message;
-  }
+  if (error instanceof TypeError) return "Sem conexão com o servidor. Tentando de novo automaticamente.";
 
-  return "Erro inesperado ao consultar dados de transporte.";
-}
-
-export function useStopTimesQuery(
-  stopId?: string | number,
-  refetchInterval: number | false = false
-) {
-  return useQuery({
-    queryKey: ["bus", "stoptimes", stopId],
-    queryFn: () => getStopTimes(stopId!),
-    enabled: Boolean(stopId),
-    refetchInterval,
-  });
+  return "Não foi possível consultar os dados agora.";
 }
 
 export { useBusRealtimeData } from "./realtime";
@@ -129,7 +116,11 @@ export function useActiveRoutesDetailsSWR(activeRouteIds: number[]) {
   const retry = () => setRevision(value => value + 1);
   useEffect(() => {
     window.addEventListener('online', retry);
-    return () => window.removeEventListener('online', retry);
+    window.addEventListener(BACKEND_BACK_EVENT, retry);
+    return () => {
+      window.removeEventListener('online', retry);
+      window.removeEventListener(BACKEND_BACK_EVENT, retry);
+    };
   }, []);
 
   useEffect(() => {

@@ -46,10 +46,3 @@ export async function getRouteVehicles(
   );
 }
 
-export async function getStopTimes(
-  stopId: string | number
-): Promise<{ stopId: string; total: number; stoptimes: unknown[] }> {
-  return fetchJson<{ stopId: string; total: number; stoptimes: unknown[] }>(
-    `/stops/${stopId}/stoptimes`
-  );
-}

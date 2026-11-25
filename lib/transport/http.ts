@@ -1,4 +1,8 @@
 import { BACKEND_BASE_URL } from "./config";
+import { reportReachable, reportUnreachable } from "./connection";
+
+/** Status used for requests that never reached the server. */
+export const NETWORK_ERROR_STATUS = 0;
 
 interface FetchJsonOptions extends RequestInit {
   timeoutMs?: number;
@@ -44,6 +48,7 @@ export async function fetchJson<T>(
       },
       signal: controller.signal,
     });
+    reportReachable();
 
     const contentType = response.headers.get("content-type") ?? "";
     const isJson = contentType.includes("application/json");
@@ -74,6 +79,11 @@ export async function fetchJson<T>(
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new HttpError("Request timeout", 408, null);
+    }
+    // fetch rejects with a TypeError when the server cannot be reached at all.
+    if (error instanceof TypeError) {
+      reportUnreachable();
+      throw new HttpError("Network error", NETWORK_ERROR_STATUS, null);
     }
     throw error;
   } finally {

@@ -2,15 +2,42 @@
 
 import { useQueryClient, useQueries } from "@tanstack/react-query";
 import * as maplibregl from "maplibre-gl";
-import type { GeoJSONSource } from "maplibre-gl";
+import type { ExpressionSpecification, GeoJSONSource } from "maplibre-gl";
+import { busIconId } from "@/lib/map/bus-icon";
+import { bearing, distanceMeters, easeOut, locateOnLine, pathBetween, pointAlong, snapToRoute, type LngLat } from "@/lib/map/vehicle-motion";
+import { markSlow3D, readBusRenderMode, resolveUses3D, writeBusRenderMode, type BusRenderMode } from "@/lib/map/render-mode";
+import type { Transit3DLayer, Vehicle3D } from "@/lib/map/transit-3d-layer";
+import { readLinkTarget, writeLinkTarget } from "@/lib/navigation/share-link";
+import { BACKEND_BACK_EVENT } from "@/lib/transport/connection";
+import { lineSelection, readFavorites, readFavoritesOnServer, stationSelection, subscribeFavorites, toggleFavorite } from "@/lib/navigation/favorites";
+
 import type * as GeoJSON from "geojson";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ROUTE_SOURCE_ID,
+  ROUTE_LAYER_ID,
+  STOPS_SOURCE_ID,
+  STOPS_LAYER_ID,
+  VEHICLES_SOURCE_ID,
+  VEHICLES_LAYER_ID,
+  escapeHtml,
+  vehiclePopup,
+  START_RIDE_ATTRIBUTE,
+  latLngToLngLat,
+  createRouteLineFeatureCollection,
+  createStopsFeatureCollection,
+  createVehicleFeatureCollection,
+  upsertGeoJsonSource,
+  safelyRunMapOperation,
+} from "@/lib/map/features";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { X } from 'lucide-react';
-import { positionQuality, positionAgeLabel } from '@/lib/transport/quality';
+import { positionQuality } from '@/lib/transport/quality';
 import { usePageVisible, useVisibleClock } from '@/lib/transport/visibility';
 import type { Place, JourneyOption } from '@/lib/transport/journeys';
+import { readOwnRide, readOwnRideOnServer, stopsAhead, subscribeOwnRide } from '@/lib/transport/rides';
 import BottomSheet from "./BottomSheet";
 import MapView from "./Map";
+import RidePanel, { type RideCandidate } from "./RidePanel";
 import SearchBar from "./SearchBar";
 import { useTheme } from "./ThemeProvider";
 import { getLineRoutes } from "@/lib/transport/bus";
@@ -40,170 +67,66 @@ import {
   type RawTrainArrival,
 } from "@/lib/transport/metro-data";
 
+const STOPS_EDGE_LAYER_ID = "bus-stops-edge-layer";
+/** Zoom from which every stop of the open line is drawn. */
+const STOPS_MIN_ZOOM = 14;
+// Below the search bar, which floats over the top of the map.
+const POPUP_TOP_MARGIN = 92;
+
+/**
+ * Padding that keeps fitted content inside the visible map: beside the left column on wide
+ * screens, between the search field and the bottom sheet on phones.
+ */
+function visibleMapPadding(focusedSheet: boolean) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const sheet = document.querySelector("#bottom-sheet > div")?.getBoundingClientRect();
+  const search = document.querySelector("input[role=combobox]")?.closest(".fixed")?.getBoundingClientRect();
+  const padding = vw >= 768
+    ? { top: 48, right: 72, bottom: 48, left: (sheet?.right ?? 396) + 32 }
+    : {
+      top: (search?.bottom ?? 80) + 24,
+      right: 40,
+      // While a line is open the sheet rises to half the screen.
+      bottom: Math.max(sheet ? vh - sheet.top : 0, focusedSheet ? vh * 0.5 : vh * 0.15) + 24,
+      left: 40,
+    };
+  // Always leave a usable area; MapLibre refuses to fit into a negative box.
+  if (vw - padding.left - padding.right < 160) padding.left = Math.max(24, vw - padding.right - 160);
+  if (vh - padding.top - padding.bottom < 160) padding.bottom = Math.max(24, vh - padding.top - 160);
+  return padding;
+}
+
 const JourneyPanel = lazy(() => import('./JourneyPanel'));
 
-const ROUTE_SOURCE_ID = "bus-route-source";
-const ROUTE_LAYER_ID = "bus-route-layer";
-const STOPS_SOURCE_ID = "bus-stops-source";
-const STOPS_LAYER_ID = "bus-stops-layer";
-const VEHICLES_SOURCE_ID = "bus-vehicles-source";
-const VEHICLES_LAYER_ID = "bus-vehicles-layer";
+const TRANSIT_3D_LAYER_ID = "transit-3d-layer";
+const BUS_MODE_EVENT = "antiwalk-bus-mode";
+const subscribeBusMode = (notify: () => void) => {
+  window.addEventListener(BUS_MODE_EVENT, notify);
+  return () => window.removeEventListener(BUS_MODE_EVENT, notify);
+};
+const getServerBusMode = (): BusRenderMode => "auto";
 
-function escapeHtml(value: unknown) {
-  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
-function vehiclePopup(vehicle: BusVehicle & { lineShortName: string }, now: number) {
-  const delay = vehicle.delayMinutes;
-  const status = delay == null ? 'Atraso não informado' : delay > 0 ? `${delay} min de atraso` : delay < 0 ? `${Math.abs(delay)} min adiantado` : 'No horário informado';
-  return `<div class="p-2 text-xs"><strong>Linha ${escapeHtml(vehicle.lineShortName)}</strong><div>Veículo: ${escapeHtml(vehicle.vehicleId)}</div><div>${escapeHtml(status)}</div><div>${escapeHtml(positionAgeLabel(vehicle, now))}</div>${positionQuality(vehicle, now) !== 'fresh' ? '<div>Posição sem confirmação recente.</div>' : ''}</div>`;
-}
-
-function latLngToLngLat(lat: number, lng: number): [number, number] {
-  return [lng, lat];
-}
-
-function createRouteLineFeatureCollection(
-  activeBusRoutesData: Record<string, BusRouteDetailsResponse>,
-  lineDirections: Record<string, number>,
-  staleRoutes: Record<number, boolean>
-): GeoJSON.FeatureCollection<GeoJSON.LineString> {
-  const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
-
-  Object.entries(activeBusRoutesData).forEach(([line, routeData]) => {
-    const selectedDirectionId = lineDirections[line] ?? 0;
-    const direction = routeData.directions.find(
-      (d) => d.directionId === selectedDirectionId
-    );
-
-    if (direction && direction.tripDetails) {
-      const coordinates = direction.tripDetails.coordinates
-        .map(([lat, lng]) => latLngToLngLat(lat, lng))
-        .filter((value) => Number.isFinite(value[0]) && Number.isFinite(value[1]));
-
-      if (coordinates.length >= 2) {
-        const isStale = Boolean(staleRoutes[routeData.route.routeId]);
-        features.push({
-          type: "Feature",
-          geometry: {
-            type: "LineString",
-            coordinates,
-          },
-          properties: {
-            lineShortName: line,
-            directionId: selectedDirectionId,
-            color: routeData.route.color ?? "#F5A300",
-            isStale,
-          },
-        });
-      }
-    }
-  });
-
-  return {
-    type: "FeatureCollection",
-    features,
-  };
-}
-
-function createStopsFeatureCollection(
-  activeBusRoutesData: Record<string, BusRouteDetailsResponse>,
-  lineDirections: Record<string, number>
-): GeoJSON.FeatureCollection<GeoJSON.Point> {
-  const features: GeoJSON.Feature<GeoJSON.Point>[] = [];
-
-  Object.entries(activeBusRoutesData).forEach(([line, routeData]) => {
-    const selectedDirectionId = lineDirections[line] ?? 0;
-    const direction = routeData.directions.find(
-      (d) => d.directionId === selectedDirectionId
-    );
-
-    if (direction && direction.tripDetails) {
-      direction.tripDetails.stops.forEach((stop) => {
-        features.push({
-          type: "Feature",
-          geometry: {
-            type: "Point",
-            coordinates: latLngToLngLat(stop.lat, stop.lng),
-          },
-          properties: {
-            stopId: stop.stopId,
-            name: stop.name,
-            lineShortName: line,
-            color: routeData.route.color ?? "#F5A300",
-          },
-        });
-      });
-    }
-  });
-
-  return {
-    type: "FeatureCollection",
-    features,
-  };
-}
-
-function createVehicleFeatureCollection(
-  vehicles: (BusVehicle & { lineShortName: string })[],
-  activeBusRoutesData: Record<string, BusRouteDetailsResponse>, now: number
-): GeoJSON.FeatureCollection<GeoJSON.Point> {
-  return {
-    type: "FeatureCollection",
-    features: vehicles
-      .filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng))
-      .map((vehicle) => {
-        const routeData = activeBusRoutesData[vehicle.lineShortName];
-        return {
-          type: "Feature",
-          geometry: {
-            type: "Point",
-            coordinates: latLngToLngLat(vehicle.lat, vehicle.lng),
-          },
-          properties: {
-            vehicleId: vehicle.vehicleId,
-            delayMinutes: vehicle.delayMinutes ?? 0,
-            delayKnown: vehicle.delayMinutes != null,
-            observedAt: vehicle.observedAt,
-            quality: positionQuality(vehicle, now),
-            heading: vehicle.heading ?? 0,
-            lineShortName: vehicle.lineShortName,
-            color: routeData?.route.color ?? "#F5A300",
-          },
-        };
-      }),
-  };
-}
-
-function upsertGeoJsonSource(
-  map: maplibregl.Map,
-  sourceId: string,
-  data: GeoJSON.FeatureCollection
-): void {
-  const existing = map.getSource(sourceId) as GeoJSONSource | undefined;
-  if (existing) {
-    existing.setData(data);
-    return;
-  }
-
-  map.addSource(sourceId, {
-    type: "geojson",
-    data,
-  });
-}
-
-function safelyRunMapOperation(operation: string, task: () => void): void {
-  try {
-    task();
-  } catch (error) {
-    console.error(`[map] Failed during ${operation}`, error);
-  }
+// Flat icons stay in place (they keep the click target); in 3D mode they are fully transparent.
+function setVehicleIconsHidden(map: maplibregl.Map, hidden: boolean) {
+  if (!map.getLayer(VEHICLES_LAYER_ID)) return;
+  map.setPaintProperty(VEHICLES_LAYER_ID, "icon-opacity", hidden ? 0 : ["case", ["==", ["get", "quality"], "fresh"], 1, 0.5]);
 }
 
 export default function TransitShell() {
   const queryClient = useQueryClient();
+  // When the API is reachable again, refresh everything that may have failed meanwhile.
+  useEffect(() => {
+    const refresh = () => { void queryClient.invalidateQueries(); };
+    window.addEventListener(BACKEND_BACK_EVENT, refresh);
+    return () => window.removeEventListener(BACKEND_BACK_EVENT, refresh);
+  }, [queryClient]);
   const { resolvedTheme } = useTheme();
   const visible = usePageVisible();
   const now = useVisibleClock();
   const [plannerOpen, setPlannerOpen] = useState(false);
+  const [plannerMounted, setPlannerMounted] = useState(false);
+  if (plannerOpen && !plannerMounted) setPlannerMounted(true);
   const [origin, setOrigin] = useState<Place | null>(null);
   const [destination, setDestination] = useState<Place | null>(null);
   const [picking, setPicking] = useState<'origin' | 'destination' | null>(null);
@@ -211,6 +134,12 @@ export default function TransitShell() {
   const [selectedStopId, setSelectedStopId] = useState<number | null>(null);
   const [routeOverrides, setRouteOverrides] = useState<Record<string, number>>({});
   const closePlanner = useCallback(() => setPlannerOpen(false), []);
+  // A bus the passenger said they are on, before the ride starts, and the ride this device shares.
+  const [rideCandidate, setRideCandidate] = useState<RideCandidate | null>(null);
+  const ownRide = useSyncExternalStore(subscribeOwnRide, readOwnRide, readOwnRideOnServer);
+  const closeRideCandidate = useCallback(() => setRideCandidate(null), []);
+  const canStartRideRef = useRef(false);
+  useEffect(() => { canStartRideRef.current = !ownRide; }, [ownRide]);
 
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
 
@@ -378,7 +307,42 @@ export default function TransitShell() {
     return mapping;
   }, [activeBusRoutesData]);
 
-  // Filter vehicles by their trip's directionId matching user selection
+  // Route of each direction of every active line, as [lng, lat].
+  const directionLines = useMemo(() => {
+    const lines: Record<string, { directionId: number; line: LngLat[] }[]> = {};
+    Object.entries(activeBusRoutesData).forEach(([line, routeData]) => {
+      lines[line] = routeData.directions
+        .filter((d) => (d.tripDetails?.coordinates.length ?? 0) >= 2)
+        .map((d) => ({ directionId: d.directionId, line: d.tripDetails.coordinates.map(([lat, lng]) => [lng, lat] as LngLat) }));
+    });
+    return lines;
+  }, [activeBusRoutesData]);
+
+  // The provider sometimes keeps a bus on the trip it has just finished while it already
+  // runs the way back. A bus far from its trip's route but right on the other direction's
+  // route is shown in that direction. Computed when positions arrive, not every second.
+  const vehicleDirections = useMemo(() => {
+    const directions = new Map<string, number | undefined>();
+    Object.entries(busVehiclesByTrip).forEach(([key, vehicles]) => {
+      const lastColonIndex = key.lastIndexOf(":");
+      const line = key.slice(0, lastColonIndex);
+      const tripDirectionId = tripToDirectionMap[`${line}:${key.slice(lastColonIndex + 1)}`];
+      const shapes = directionLines[line] ?? [];
+      const own = shapes.find((s) => s.directionId === tripDirectionId);
+      for (const vehicle of vehicles) {
+        let directionId = tripDirectionId;
+        const point: LngLat = [vehicle.lng, vehicle.lat];
+        if (own && shapes.length > 1 && (locateOnLine(own.line, point)?.distance ?? 0) > 60) {
+          const other = shapes.find((s) => s !== own && (locateOnLine(s.line, point)?.distance ?? Infinity) <= 25);
+          if (other) directionId = other.directionId;
+        }
+        directions.set(`${key}:${vehicle.vehicleId}`, directionId);
+      }
+    });
+    return directions;
+  }, [busVehiclesByTrip, tripToDirectionMap, directionLines]);
+
+  // Filter vehicles by the direction they run, matching the user's selection
   const filteredBusVehicles = useMemo(() => {
     const list: (BusVehicle & { lineShortName: string; tripId: string | number })[] = [];
 
@@ -388,29 +352,53 @@ export default function TransitShell() {
       const tripId = key.slice(lastColonIndex + 1);
 
       const selectedDirectionId = lineDirections[line] ?? 0;
-      const directionId = tripToDirectionMap[`${line}:${tripId}`];
 
-      if (directionId === selectedDirectionId) {
-        list.push(...vehicles.filter(v => positionQuality(v, now) !== 'expired'));
+      for (const vehicle of vehicles) {
+        if (positionQuality(vehicle, now) === 'expired') continue;
+        if (vehicleDirections.get(`${line}:${tripId}:${vehicle.vehicleId}`) === selectedDirectionId) list.push(vehicle);
       }
     });
 
     return list;
-  }, [busVehiclesByTrip, lineDirections, tripToDirectionMap, now]);
+  }, [busVehiclesByTrip, lineDirections, vehicleDirections, now]);
 
   const routeLineFeatures = useMemo(
     () => createRouteLineFeatureCollection(activeBusRoutesData, lineDirections, staleRoutes),
     [activeBusRoutesData, lineDirections, staleRoutes]
   );
   const vehiclesRef = useRef(filteredBusVehicles);
-  vehiclesRef.current = filteredBusVehicles;
+  useEffect(() => { vehiclesRef.current = filteredBusVehicles; }, [filteredBusVehicles]);
   useEffect(() => {
     const active = busPopupRef.current;
     if (!active) return;
     const vehicle = filteredBusVehicles.find(v => `${v.lineShortName}:${v.vehicleId}` === active.key);
     if (!vehicle) { active.popup.remove(); busPopupRef.current = null; return; }
-    active.popup.setLngLat([vehicle.lng, vehicle.lat]).setHTML(vehiclePopup(vehicle, now));
-  }, [filteredBusVehicles, now]);
+    active.popup.setHTML(vehiclePopup(vehicle, now, { canStartRide: !ownRide }));
+  }, [filteredBusVehicles, now, ownRide]);
+
+  // "Estou neste ônibus": the bus as the map shows it, on the trip of the direction it runs.
+  const openRideCandidate = useCallback((key: string) => {
+    const vehicle = vehiclesRef.current.find(v => `${v.lineShortName}:${v.vehicleId}` === key);
+    if (!vehicle) return;
+    const line = vehicle.lineShortName;
+    const routeData = activeBusRoutesData[line];
+    const directionId = lineDirections[line] ?? 0;
+    const direction = routeData?.directions.find(d => d.directionId === directionId);
+    // The bus's own trip when it runs this direction, else the direction's usual one.
+    const trip = routeData?.trips.find(t => String(t.tripId) === String(vehicle.tripId) && t.directionId === directionId && t.tripDetails)
+      ?? (direction?.tripDetails ? direction : null);
+    if (!routeData || !trip) return;
+    const shape = trip.tripDetails.coordinates.map(([lat, lng]) => [lng, lat] as LngLat);
+    setRideCandidate({
+      line, routeId: routeData.route.routeId, tripId: Number(trip.tripId), directionId,
+      vehicleId: String(vehicle.vehicleId),
+      headsign: trip.tripDetails.tripName || trip.tripDetails.stops.at(-1)?.name || (directionId === 0 ? "Ida" : "Volta"),
+      color: routeData.route.color ?? "#F5A300", textColor: routeData.route.textColor ?? "#000000",
+      stops: stopsAhead(shape, trip.tripDetails.stops, [vehicle.lng, vehicle.lat]),
+    });
+  }, [activeBusRoutesData, lineDirections]);
+  const openRideCandidateRef = useRef(openRideCandidate);
+  useEffect(() => { openRideCandidateRef.current = openRideCandidate; }, [openRideCandidate]);
 
   const routeStopsFeatures = useMemo(
     () => createStopsFeatureCollection(activeBusRoutesData, lineDirections),
@@ -423,6 +411,40 @@ export default function TransitShell() {
   );
 
   const [throttledBusVehicleFeatures, setThrottledBusVehicleFeatures] = useState(busVehicleFeatures);
+  const busMode = useSyncExternalStore(subscribeBusMode, readBusRenderMode, getServerBusMode);
+  const changeBusMode = useCallback((mode: BusRenderMode) => {
+    writeBusRenderMode(mode);
+    window.dispatchEvent(new Event(BUS_MODE_EVENT));
+  }, []);
+  const [slow3D, setSlow3D] = useState(false);
+  const capable3D = useSyncExternalStore(subscribeBusMode, () => resolveUses3D(busMode), () => false);
+  const use3D = capable3D && !(busMode === "auto" && slow3D);
+  const transit3DRef = useRef<Transit3DLayer | null>(null);
+
+  // Where each bus is drawn right now, so a new position animates from there.
+  // `along` is its progress on the drawn route, when it sits on it.
+  const vehiclePositionsRef = useRef(new Map<string, { point: LngLat; heading: number; along?: number }>());
+  const lastVehicleFrameRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({ type: "FeatureCollection", features: [] });
+  const stops3DRef = useRef<{ key: string; lng: number; lat: number; heading: number; name: string }[]>([]);
+  const watchFrameRate = useRef(false);
+  const toVehicles3D = useCallback((collection: GeoJSON.FeatureCollection<GeoJSON.Point>): Vehicle3D[] =>
+    collection.features.map((feature) => {
+      const line = String(feature.properties?.lineShortName ?? "");
+      const routeData = activeBusRoutesData[line];
+      const direction = routeData?.directions.find((d) => d.directionId === (lineDirections[line] ?? 0));
+      return {
+        key: `${line}:${feature.properties?.vehicleId}`,
+        lng: feature.geometry.coordinates[0],
+        lat: feature.geometry.coordinates[1],
+        heading: Number(feature.properties?.heading ?? 0),
+        color: String(feature.properties?.color ?? "#F5A300"),
+        line,
+        destination: direction?.tripDetails.tripName ?? routeData?.route.longName ?? "",
+      };
+    }), [activeBusRoutesData, lineDirections]);
+  // Effects read the latest converter through a ref, so new route data does not restart them.
+  const toVehicles3DRef = useRef(toVehicles3D);
+  useEffect(() => { toVehicles3DRef.current = toVehicles3D; }, [toVehicles3D]);
   const lastUpdateTimeRef = useRef<number>(0);
   const nextUpdateTimeoutRef = useRef<number | null>(null);
 
@@ -597,20 +619,41 @@ export default function TransitShell() {
           ]);
         }
 
+        // Terminals are always shown; the stops in between appear only once the map is close
+        // enough for them to mean something, like transit apps do.
+        if (!mapInstance.getLayer(STOPS_EDGE_LAYER_ID)) {
+          mapInstance.addLayer({
+            id: STOPS_EDGE_LAYER_ID,
+            type: "circle",
+            source: STOPS_SOURCE_ID,
+            filter: ["==", ["get", "isEdge"], true],
+            maxzoom: STOPS_MIN_ZOOM,
+            paint: {
+              "circle-radius": 5,
+              "circle-color": ["get", "color"],
+              "circle-stroke-width": 2,
+              "circle-stroke-color": "#ffffff",
+            },
+          });
+        }
+        if (mapInstance.getLayer(STOPS_LAYER_ID) && mapInstance.getLayer(STOPS_LAYER_ID)?.minzoom !== STOPS_MIN_ZOOM) {
+          mapInstance.removeLayer(STOPS_LAYER_ID);
+        }
         if (!mapInstance.getLayer(STOPS_LAYER_ID)) {
           mapInstance.addLayer({
             id: STOPS_LAYER_ID,
             type: "circle",
             source: STOPS_SOURCE_ID,
+            minzoom: STOPS_MIN_ZOOM,
             paint: {
-              "circle-radius": 3.5,
-              "circle-color": "#ffffff",
-              "circle-stroke-width": 2,
-              "circle-stroke-color": ["get", "color"],
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], STOPS_MIN_ZOOM, ["case", ["get", "isEdge"], 5, 2.5], 17, ["case", ["get", "isEdge"], 6.5, 5]],
+              "circle-color": ["case", ["get", "isEdge"], ["get", "color"], "#ffffff"],
+              "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], STOPS_MIN_ZOOM, 1.5, 17, 2],
+              "circle-stroke-color": ["case", ["get", "isEdge"], "#ffffff", ["get", "color"]],
             },
           });
         } else {
-          mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-stroke-color", ["get", "color"]);
+          mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-stroke-color", ["case", ["get", "isEdge"], "#ffffff", ["get", "color"]]);
         }
       });
     };
@@ -626,9 +669,35 @@ export default function TransitShell() {
     };
   }, [mapInstance, routeLineFeatures, routeStopsFeatures]);
 
+  // Bring the chosen stop into view and highlight it.
+  const flownToStop = useRef<number | null>(null);
+  const selectedStopIdRef = useRef(selectedStopId);
+  useEffect(() => { selectedStopIdRef.current = selectedStopId; }, [selectedStopId]);
+  useEffect(() => {
+    if (!mapInstance) return;
+    const selected: ExpressionSpecification = ["==", ["to-number", ["get", "stopId"]], selectedStopId ?? -1];
+    if (mapInstance.getLayer(STOPS_LAYER_ID)) {
+      mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-radius", ["interpolate", ["linear"], ["zoom"], STOPS_MIN_ZOOM, ["case", selected, 7, ["get", "isEdge"], 5, 2.5], 17, ["case", selected, 9, ["get", "isEdge"], 6.5, 5]]);
+      mapInstance.setPaintProperty(STOPS_LAYER_ID, "circle-color", ["case", selected, "#F5A300", ["get", "isEdge"], ["get", "color"], "#ffffff"]);
+    }
+    if (selectedStopId == null) { flownToStop.current = null; return; }
+    if (flownToStop.current === selectedStopId) return;
+    const stop = routeStopsFeatures.features.find((f) => Number(f.properties?.stopId) === selectedStopId);
+    if (!stop) return;
+    flownToStop.current = selectedStopId;
+    // Shift the target so it lands in the middle of the visible area, without changing the map's padding.
+    const pad = visibleMapPadding(true);
+    mapInstance.easeTo({
+      center: stop.geometry.coordinates as [number, number],
+      zoom: Math.max(mapInstance.getZoom(), 15.5),
+      offset: [(pad.left - pad.right) / 2, (pad.top - pad.bottom) / 2],
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 600,
+    });
+  }, [mapInstance, selectedStopId, routeStopsFeatures]);
+
   // Fit map bounds to the focused line's route geometry when it changes
   useEffect(() => {
-    if (!mapInstance || !focusedLine || journey) return;
+    if (!mapInstance || !focusedLine || journey || selectedStopIdRef.current != null) return;
 
     const routeData = activeBusRoutesData[focusedLine];
     if (!routeData) return;
@@ -653,14 +722,9 @@ export default function TransitShell() {
     );
 
     mapInstance.fitBounds(bounds, {
-      padding: {
-        top: 100,
-        right: 80,
-        bottom: 260,
-        left: 80,
-      },
+      padding: visibleMapPadding(true),
       maxZoom: 14,
-      duration: 700,
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 700,
     });
   }, [mapInstance, focusedLine, activeBusRoutesData, lineDirections, journey]);
 
@@ -877,59 +941,31 @@ export default function TransitShell() {
       if (!mapInstance.getStyle()) return;
 
       safelyRunMapOperation("draw-bus-vehicle-layer", () => {
-        upsertGeoJsonSource(mapInstance, VEHICLES_SOURCE_ID, throttledBusVehicleFeatures);
+        upsertGeoJsonSource(mapInstance, VEHICLES_SOURCE_ID, lastVehicleFrameRef.current);
 
-        // 1. Bus background circle
+        // Layers from older versions of this view.
+        const existing = mapInstance.getLayer(VEHICLES_LAYER_ID);
+        if (existing && existing.type !== "symbol") mapInstance.removeLayer(VEHICLES_LAYER_ID);
+        if (mapInstance.getLayer("bus-vehicles-direction-layer")) mapInstance.removeLayer("bus-vehicles-direction-layer");
+
         if (!mapInstance.getLayer(VEHICLES_LAYER_ID)) {
           mapInstance.addLayer({
             id: VEHICLES_LAYER_ID,
-            type: "circle",
-            source: VEHICLES_SOURCE_ID,
-            paint: {
-              "circle-radius": 9.5,
-              "circle-color": ["get", "color"],
-              "circle-opacity": ["case", ["==", ["get", "quality"], "fresh"], 1, 0.55],
-              "circle-stroke-width": 2.5,
-              "circle-stroke-color": [
-                "case",
-                ["any", ["!=", ["get", "quality"], "fresh"], ["!", ["get", "delayKnown"]]],
-                "#94a3b8",
-                [">", ["coalesce", ["get", "delayMinutes"], 0], 5],
-                "#ef4444",
-                "#10b981"
-              ]
-            }
-          });
-        } else {
-          mapInstance.setPaintProperty(VEHICLES_LAYER_ID, "circle-color", ["get", "color"]);
-          mapInstance.setPaintProperty(VEHICLES_LAYER_ID, "circle-opacity", ["case", ["==", ["get", "quality"], "fresh"], 1, 0.55]);
-          mapInstance.setPaintProperty(VEHICLES_LAYER_ID, "circle-stroke-color", [
-            "case",
-            ["any", ["!=", ["get", "quality"], "fresh"], ["!", ["get", "delayKnown"]]],
-            "#94a3b8",
-            [">", ["coalesce", ["get", "delayMinutes"], 0], 5],
-            "#ef4444",
-            "#10b981"
-          ]);
-        }
-
-        // 2. Bus direction indicator arrow (▲ rotated by heading)
-        if (!mapInstance.getLayer("bus-vehicles-direction-layer")) {
-          mapInstance.addLayer({
-            id: "bus-vehicles-direction-layer",
             type: "symbol",
             source: VEHICLES_SOURCE_ID,
             layout: {
-              "text-field": "▲",
-              "text-font": ["Noto Sans Regular"],
-              "text-size": 7.5,
-              "text-rotate": ["to-number", ["get", "heading"], 0],
-              "text-keep-upright": false,
-              "text-anchor": "center"
+              "icon-image": ["get", "icon"],
+              "icon-rotate": ["to-number", ["get", "heading"], 0],
+              "icon-rotation-alignment": "map",
+              "icon-pitch-alignment": "map",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              // Large enough to find from afar, growing a little as the map zooms in.
+              "icon-size": ["interpolate", ["linear"], ["zoom"], 10, 0.9, 14, 1, 17, 1.4],
             },
             paint: {
-              "text-color": "#ffffff"
-            }
+              "icon-opacity": ["case", ["==", ["get", "quality"], "fresh"], 1, 0.5],
+            },
           });
         }
 
@@ -943,12 +979,12 @@ export default function TransitShell() {
               "text-field": ["get", "lineShortName"],
               "text-font": ["Noto Sans Regular"],
               "text-size": 10.5,
-              "text-offset": [0, -1.3],
+              "text-offset": [0, -1.6],
               "text-anchor": "bottom"
             },
             paint: {
               "text-color": "#141414",
-              "text-halo-color": "#ffffff",
+              "text-halo-color": "#F6F2E9",
               "text-halo-width": 2
             }
           });
@@ -965,7 +1001,144 @@ export default function TransitShell() {
     return () => {
       mapInstance.off("style.load", drawLayers);
     };
-  }, [mapInstance, throttledBusVehicleFeatures]);
+  }, [mapInstance]);
+
+  // Slide each bus from where it is drawn to its new position, along the route when possible.
+  useEffect(() => {
+    if (!mapInstance) return;
+    const routes = new Map<string, LngLat[]>();
+    for (const feature of routeLineFeatures.features) {
+      routes.set(String(feature.properties?.lineShortName), feature.geometry.coordinates as LngLat[]);
+    }
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const shown = vehiclePositionsRef.current;
+    const plans = throttledBusVehicleFeatures.features.map((feature) => {
+      const key = `${feature.properties?.lineShortName}:${feature.properties?.vehicleId}`;
+      const line = routes.get(String(feature.properties?.lineShortName));
+      const previous = shown.get(key);
+      // GPS drifts sideways and its heading is often off, so a bus near its route is drawn
+      // on it, facing the way the route runs. Far from it (garage, detour) it stays as reported.
+      const snap = line ? snapToRoute(line, feature.geometry.coordinates as LngLat, { previousAlong: previous?.along }) : null;
+      let target = snap?.point ?? (feature.geometry.coordinates as LngLat);
+      let finalHeading = snap?.heading ?? Number(feature.properties?.heading ?? 0);
+      let along = snap?.along;
+      // A fix slightly behind where the bus is drawn is GPS jitter: hold it rather than turn back.
+      if (snap && previous?.along !== undefined && snap.along < previous.along && previous.along - snap.along < 50) {
+        target = previous.point;
+        finalHeading = previous.heading;
+        along = previous.along;
+      }
+      // New buses and long jumps appear in place instead of sweeping across the map.
+      const path = !previous || reduceMotion || distanceMeters(previous.point, target) > 1500
+        ? [target]
+        : pathBetween(line, previous.point, target);
+      return { key, feature, path, startHeading: previous?.heading, finalHeading, along };
+    });
+
+    const frame = (k: number): GeoJSON.FeatureCollection<GeoJSON.Point> => {
+      const next = new Map<string, { point: LngLat; heading: number; along?: number }>();
+      const features = plans.map(({ key, feature, path, startHeading, finalHeading, along }) => {
+        const at = pointAlong(path, k);
+        const heading = k >= 1 ? finalHeading : at.heading ?? startHeading ?? finalHeading;
+        next.set(key, { point: at.point, heading, along });
+        return {
+          ...feature,
+          geometry: { type: "Point" as const, coordinates: at.point },
+          properties: { ...feature.properties, heading, icon: busIconId(String(feature.properties?.color ?? "#F5A300")) },
+        };
+      });
+      vehiclePositionsRef.current = next;
+      const popup = busPopupRef.current;
+      const drawn = popup && next.get(popup.key);
+      if (drawn) popup.popup.setLngLat(drawn.point);
+      const collection = { type: "FeatureCollection" as const, features };
+      lastVehicleFrameRef.current = collection;
+      return collection;
+    };
+
+    const draw = (k: number) => {
+      const source = mapInstance.getSource(VEHICLES_SOURCE_ID) as GeoJSONSource | undefined;
+      const data = frame(k);
+      source?.setData(data);
+      transit3DRef.current?.setVehicles(toVehicles3DRef.current(data));
+    };
+
+    const duration = 1600;
+    const moving = plans.some((plan) => plan.path.length > 1);
+    if (!moving) {
+      draw(1);
+      return;
+    }
+    const startedAt = performance.now();
+    let handle = 0;
+    let frames = 0;
+    const step = (time: number) => {
+      const k = Math.min(1, (time - startedAt) / duration);
+      draw(easeOut(k));
+      frames++;
+      if (k < 1) {
+        handle = requestAnimationFrame(step);
+      } else if (watchFrameRate.current && frames < (duration / 1000) * 22) {
+        // Fewer than ~22 frames per second while the map was moving: fall back to icons for good.
+        markSlow3D();
+        setSlow3D(true);
+      }
+    };
+    handle = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(handle);
+  }, [mapInstance, throttledBusVehicleFeatures, routeLineFeatures]);
+
+  // 3D layer: loaded on demand, re-added when the style changes (theme switch).
+  useEffect(() => {
+    watchFrameRate.current = use3D && busMode === "auto";
+    if (!mapInstance || !use3D) return;
+    let cancelled = false;
+    let layer: Transit3DLayer | null = null;
+    const attach = () => {
+      if (!layer || !mapInstance.getStyle() || mapInstance.getLayer(TRANSIT_3D_LAYER_ID)) return;
+      // Added on top: inserted between symbol layers, three.js leaves GL state the map's next passes do not expect.
+      mapInstance.addLayer(layer);
+      setVehicleIconsHidden(mapInstance, true);
+    };
+    import("@/lib/map/transit-3d-layer").then(({ createTransit3DLayer }) => {
+      if (cancelled) return;
+      layer = createTransit3DLayer(TRANSIT_3D_LAYER_ID);
+      transit3DRef.current = layer;
+      attach();
+      layer.setVehicles(toVehicles3DRef.current(lastVehicleFrameRef.current));
+      layer.setStops(stops3DRef.current);
+    });
+    mapInstance.on("style.load", attach);
+    // Tilting is what shows the models in 3D; it stays off in light mode.
+    mapInstance.dragRotate.enable();
+    mapInstance.touchZoomRotate.enableRotation();
+    mapInstance.touchPitch.enable();
+    if (mapInstance.getPitch() < 30) mapInstance.easeTo({ pitch: 45, duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 600 });
+    return () => {
+      cancelled = true;
+      mapInstance.dragRotate.disable();
+      mapInstance.touchPitch.disable();
+      mapInstance.easeTo({ pitch: 0, bearing: 0, duration: 0 });
+      mapInstance.off("style.load", attach);
+      transit3DRef.current = null;
+      if (mapInstance.getLayer(TRANSIT_3D_LAYER_ID)) mapInstance.removeLayer(TRANSIT_3D_LAYER_ID);
+      setVehicleIconsHidden(mapInstance, false);
+    };
+  }, [mapInstance, use3D, busMode]);
+
+  // Stops for the 3D layer, oriented by the route's direction at each stop.
+  useEffect(() => {
+    const routes = new Map<string, LngLat[]>();
+    for (const feature of routeLineFeatures.features) routes.set(String(feature.properties?.lineShortName), feature.geometry.coordinates as LngLat[]);
+    stops3DRef.current = routeStopsFeatures.features.map((feature, index) => {
+      const point = feature.geometry.coordinates as LngLat;
+      const line = routes.get(String(feature.properties?.lineShortName));
+      const at = line ? locateOnLine(line, point) : null;
+      const heading = line && at ? bearing(line[at.index], line[at.index + 1]) : 0;
+      return { key: `${feature.properties?.lineShortName}:${feature.properties?.stopId}:${index}`, lng: point[0], lat: point[1], heading, name: String(feature.properties?.name ?? "Parada") };
+    });
+    transit3DRef.current?.setStops(stops3DRef.current);
+  }, [routeStopsFeatures, routeLineFeatures]);
 
   // Click listeners & Hover pointer behaviors for interactive map layers
   useEffect(() => {
@@ -1007,9 +1180,19 @@ export default function TransitShell() {
         const vehicle = vehiclesRef.current.find(v => `${v.lineShortName}:${v.vehicleId}` === key);
         if (!vehicle) return;
         busPopupRef.current?.popup.remove();
-        const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(vehiclePopup(vehicle, Date.now())).addTo(mapInstance);
+        const popup = new maplibregl.Popup().setLngLat(e.lngLat)
+          .setHTML(vehiclePopup(vehicle, Date.now(), { canStartRide: canStartRideRef.current })).addTo(mapInstance);
         busPopupRef.current = { popup, key };
         popup.on('close', () => { if (busPopupRef.current?.popup === popup) busPopupRef.current = null; });
+        // A popup opened near the top would sit under the search bar: move the map down to show it.
+        const top = popup.getElement()?.getBoundingClientRect().top;
+        if (top !== undefined && top < POPUP_TOP_MARGIN) mapInstance.panBy([0, top - POPUP_TOP_MARGIN], { duration: 300 });
+        // The popup's content is replaced as the bus moves, so its container listens.
+        popup.getElement()?.addEventListener('click', (event) => {
+          if (!(event.target instanceof Element) || !event.target.closest(`[${START_RIDE_ATTRIBUTE}]`)) return;
+          openRideCandidateRef.current(key);
+          popup.remove();
+        });
       }
     };
 
@@ -1020,17 +1203,17 @@ export default function TransitShell() {
       if (feature) {
         const { id, linha, sentido, destino_final, minutesToArrival } = feature.properties;
         const etaText = minutesToArrival === 0 
-          ? `<span class="text-emerald-500 font-bold">Na estação</span>`
-          : `Chega em <span class="font-bold text-blue-600">${minutesToArrival} min</span>`;
+          ? `<span class="font-bold">Na estação</span>`
+          : `Chega em <span class="font-bold">${escapeHtml(Number(minutesToArrival))} min</span>`;
 
         new maplibregl.Popup({ closeButton: false })
           .setLngLat(e.lngLat)
           .setHTML(`
-            <div class="p-2 text-xs font-sans text-gray-800">
-              <div class="font-bold text-sm mb-1 text-gray-900">Trem ${escapeHtml(id)} (${escapeHtml(linha)})</div>
+            <div class="p-2 text-xs">
+              <div class="font-bold text-sm mb-1">Trem ${escapeHtml(id)} (${escapeHtml(linha)})</div>
               <div>Sentido: <span class="font-medium">${escapeHtml(sentido)}</span></div>
-              <div>Destino: <span class="font-medium text-gray-700">${escapeHtml(destino_final)}</span></div>
-              <div class="mt-1.5 pt-1 border-t border-gray-100">${etaText}</div>
+              <div>Destino: <span class="font-medium">${escapeHtml(destino_final)}</span></div>
+              <div class="mt-1.5 pt-1 border-t border-border">${etaText}</div>
               <div class="mt-1">Posição estimada pela previsão de chegada.</div>
             </div>
           `)
@@ -1078,6 +1261,8 @@ export default function TransitShell() {
   }, [clearMetroWatchdog]);
 
   const handleResultSelect = useCallback((result: SearchSelection) => {
+    // A stop chosen on a previous line does not carry over.
+    setSelectedStopId(null);
     if (result.type === "station") {
       setSelectedStationCode(result.stationCode);
       setFocusedLine(null);
@@ -1110,6 +1295,65 @@ export default function TransitShell() {
       return prev;
     });
   }, [selectedLines]);
+
+  // Open what a shared link points to, once.
+  const linkApplied = useRef(false);
+  useEffect(() => {
+    if (linkApplied.current) return;
+    linkApplied.current = true;
+    const target = readLinkTarget(window.location.search);
+    // App shortcut "Traçar rota".
+    if (new URLSearchParams(window.location.search).get("rota") === "1") setPlannerOpen(true);
+    const ride = readOwnRide();
+    if (target.line) {
+      handleResultSelect(lineSelection(target.line));
+      if (target.direction !== undefined) setLineDirections((prev) => ({ ...prev, [target.line!]: target.direction! }));
+    } else if (target.station) {
+      handleResultSelect(stationSelection(target.station));
+    } else if (ride) {
+      // Back in the app during a shared ride: show the line of the bus being followed.
+      handleResultSelect(lineSelection(ride.line));
+      setLineDirections((prev) => ({ ...prev, [ride.line]: ride.directionId }));
+    }
+  }, [handleResultSelect]);
+
+  // Keep the address in step with the view, so it can be bookmarked or shared.
+  useEffect(() => {
+    if (!linkApplied.current) return;
+    const query = writeLinkTarget(focusedLine
+      ? { line: focusedLine, direction: lineDirections[focusedLine] ?? 0 }
+      : { station: selectedStationCode ?? undefined });
+    const next = `${window.location.pathname}${query}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, "", next);
+  }, [focusedLine, selectedStationCode, lineDirections]);
+
+  const favorites = useSyncExternalStore(subscribeFavorites, readFavorites, readFavoritesOnServer);
+
+  // From "Perto de você": open a line already pointed at the stop the person is near.
+  const openLineAtStop = useCallback((line: string, stopId?: number) => {
+    handleResultSelect(lineSelection(line));
+    setSelectedStopId(stopId ?? null);
+  }, [handleResultSelect]);
+  const openStation = useCallback((code: string, name: string) => {
+    handleResultSelect(stationSelection(code, name));
+  }, [handleResultSelect]);
+
+  const shareCurrentView = useCallback(async (): Promise<"shared" | "copied" | "failed"> => {
+    const url = window.location.href;
+    const title = document.title;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        return "shared";
+      }
+      await navigator.clipboard.writeText(url);
+      return "copied";
+    } catch (error) {
+      // Closing the share sheet is not a failure.
+      if (error instanceof DOMException && error.name === "AbortError") return "shared";
+      return "failed";
+    }
+  }, []);
 
   const metroError = useMemo(() => {
     if (!selectedStationCode) {
@@ -1169,7 +1413,7 @@ export default function TransitShell() {
     if (points.length && mapInstance) {
       const bounds = new maplibregl.LngLatBounds(points[0], points[0]);
       points.forEach(p => bounds.extend(p));
-      mapInstance.fitBounds(bounds, { padding: { top: 120, bottom: 180, left: 45, right: 45 }, maxZoom: 15,
+      mapInstance.fitBounds(bounds, { padding: visibleMapPadding(true), maxZoom: 15,
         duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 600 });
     }
   }, [mapInstance]);
@@ -1197,7 +1441,10 @@ export default function TransitShell() {
       />
 
       {picking && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 flex items-center justify-between gap-2"><p className="text-sm">Toque no mapa para escolher {picking === 'origin' ? 'a origem' : 'o destino'}.</p><button type="button" className="h-11 w-11" aria-label="Cancelar seleção no mapa" onClick={() => { setPicking(null); setPlannerOpen(true); }}><X /></button></div>}
-      {journey && !picking && !plannerOpen && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 text-sm" role="status">
+      {(rideCandidate || ownRide) && !picking && (
+        <RidePanel candidate={rideCandidate} own={ownRide} now={now} onCloseCandidate={closeRideCandidate} />
+      )}
+      {journey && !picking && !plannerOpen && !rideCandidate && !ownRide && <div className="absolute left-4 right-4 top-20 z-30 rounded-lg border border-border bg-card p-3 shadow-lg md:left-[25.5rem] md:right-auto md:top-4 md:w-80 text-sm" role="status">
         <p className="font-semibold">Percurso de cerca de {journey.durationMinutes} min</p>
         <p className="mt-1 text-xs text-muted-foreground">{journey.legs.some(l => l.mode === 'walk' && l.walkingRoute !== 'geoapify') ? 'Há caminhadas aproximadas. Confira os acessos a pé.' : 'Tempos estimados. Os traçados do transporte são aproximados.'}</p>
         <div className="mt-2 flex gap-2">
@@ -1205,33 +1452,10 @@ export default function TransitShell() {
           <button type="button" onClick={() => setJourney(null)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-accent">Limpar</button>
         </div>
       </div>}
-      {plannerOpen && <Suspense fallback={<div className="fixed inset-0 z-40 flex items-center justify-center bg-card text-sm text-muted-foreground md:inset-auto md:bottom-4 md:left-4 md:top-4 md:w-[380px] md:rounded-xl md:border md:border-border">Abrindo…</div>}>
+      {plannerMounted && <div className={plannerOpen ? undefined : 'hidden'}><Suspense fallback={<div className="fixed inset-0 z-40 flex items-center justify-center bg-card text-sm text-muted-foreground md:inset-auto md:bottom-4 md:left-4 md:top-4 md:w-[380px] md:rounded-xl md:border md:border-border">Abrindo…</div>}>
         <JourneyPanel origin={origin} destination={destination} onOrigin={setOrigin} onDestination={setDestination} onClose={closePlanner} onSelect={selectJourney}
           onPick={field => { setPicking(field); setPlannerOpen(false); }} />
-      </Suspense>}
-
-      {/* Floating Status Badges */}
-      {(isSseFallback || Object.values(staleRoutes).some((v) => v)) && selectedLines.length > 0 && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-20 flex flex-col gap-2 w-[calc(100%-2rem)] max-w-md pointer-events-none transition-all duration-300 ${selectedLines.length > 0 ? "top-[7.5rem]" : "top-20"}`}>
-          {isSseFallback && (
-            <div className="flex items-center gap-2 bg-amber-500/15 backdrop-blur-md border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-sm w-full transition-all duration-300">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-              </span>
-              <span>Reconectando. Consultando posições a cada 15s.</span>
-            </div>
-          )}
-          {Object.values(staleRoutes).some((v) => v) && (
-            <div className="flex items-center gap-2 bg-card/90 backdrop-blur-md border border-border text-foreground text-xs font-semibold px-3 py-2 rounded-lg shadow-sm w-full transition-all duration-300">
-              <span className="relative flex h-2 w-2">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-foreground"></span>
-              </span>
-              <span>Itinerário salvo. A confirmação de atualização ainda está pendente.</span>
-            </div>
-          )}
-        </div>
-      )}
+      </Suspense></div>}
 
       <div id="bottom-sheet">
         <BottomSheet
@@ -1265,6 +1489,16 @@ export default function TransitShell() {
           activeBusRoutesData={activeBusRoutesData}
           busVehicles={filteredBusVehicles}
           onSelectResult={handleResultSelect}
+          isRealtimeFallback={isSseFallback}
+          busMode={busMode}
+          onBusModeChange={changeBusMode}
+          uses3D={use3D}
+          favorites={favorites}
+          onToggleFavorite={toggleFavorite}
+          onShare={shareCurrentView}
+          onOpenNearbyLine={openLineAtStop}
+          onOpenNearbyStation={openStation}
+          hasCachedRoutes={Object.values(staleRoutes).some(Boolean)}
         />
       </div>
     </main>

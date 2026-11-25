@@ -7,6 +7,7 @@ Rastreador e informador de horários de ônibus e metrô de Brasília (DF). Most
 - **Mapa ao vivo**: ônibus e trens do metrô posicionados no mapa, com a idade de cada posição de GPS.
 - **Próximas chegadas**: previsões por parada ou estação, separando horários programados de previsões com GPS recente.
 - **Planejamento de viagem**: compara opções por duração, caminhada e baldeações, com até duas trocas, combinando ônibus, metrô e trechos a pé.
+- **Viagem compartilhada**: quem está num ônibus toca nele no mapa, escolhe onde vai descer e envia um link. Quem recebe vê o ônibus andando no mapa e a previsão de chegada, sem instalar nada. O link para quando a viagem termina.
 - **Busca**: linhas, paradas, estações e endereços.
 - **PWA**: pode ser instalado no celular e mantém a interface e os itinerários recentes disponíveis sem conexão.
 - **Tema claro e escuro**, navegação por teclado e controles de toque de pelo menos 44 px.
@@ -18,6 +19,7 @@ O Antiwalk é a interface. Os dados vêm de uma API própria, o projeto `websock
 - **Dados ao vivo**: as posições chegam por WebSocket e SSE. Se a conexão falha, a interface passa a consultar a API em intervalos e avisa que os dados podem estar atrasados.
 - **Qualidade das posições**: cada posição é classificada pela idade do GPS. Posições antigas não geram previsão ao vivo, e as com mais de dois minutos saem do mapa.
 - **Metrô**: as posições dos trens são estimadas a partir das previsões de chegada em cada estação.
+- **Viagem compartilhada**: o servidor acompanha o ônibus escolhido pelo GPS da linha e envia as posições à página do link por SSE. A localização de quem compartilha não é usada; o aparelho guarda só o código que encerra a viagem, e a viagem volta a aparecer quando o app é reaberto.
 - **Planejamento**: o cálculo acontece no servidor, que prepara a rede de linhas e paradas. Ônibus usam a programação por dia de serviço; o metrô entra quando há previsões recentes do mesmo trem em pelo menos duas estações.
 - **Endereços e caminhadas**: a busca de endereços e os trechos a pé pelas ruas usam o Geoapify, sempre por meio do servidor.
 - **Economia de dados e bateria**: consultas periódicas e assinaturas pausam quando a página está oculta, e a busca de endereços aguarda a digitação terminar.

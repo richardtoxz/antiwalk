@@ -1,12 +1,15 @@
-const CACHE_NAME = 'transporte-df-v2';
-const STATIC_ASSETS = ['/manifest.json', '/favicon.ico', '/icon-192x192.png', '/icon-512x512.png', '/apple-icon.png'];
+const CACHE_NAME = 'transporte-df-v4';
+const STATIC_ASSETS = ['/manifest.json', '/favicon.ico', '/icon.svg', '/icon-32x32.png', '/icon-192x192.png', '/icon-512x512.png', '/icon-maskable-512x512.png', '/apple-icon.png'];
 const MAX_ASSETS = 120;
+// Map fonts and icons: they change rarely and the map needs them for labels when offline.
+const MAP_ASSETS_ORIGIN = 'https://protomaps.github.io';
+const MAP_ASSETS_CACHE = 'transporte-df-map-assets-v1';
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => Promise.allSettled(['/', ...STATIC_ASSETS].map(url => cache.add(url)))));
   self.skipWaiting();
 });
 self.addEventListener('activate', event => {
-  event.waitUntil(caches.keys().then(names => Promise.all(names.filter(name => name.startsWith('transporte-df-') && name !== CACHE_NAME).map(name => caches.delete(name)))).then(() => self.clients.claim()));
+  event.waitUntil(caches.keys().then(names => Promise.all(names.filter(name => name.startsWith('transporte-df-') && name !== CACHE_NAME && name !== MAP_ASSETS_CACHE).map(name => caches.delete(name)))).then(() => self.clients.claim()));
 });
 async function save(cache, request, response) {
   if (!response.ok || response.type === 'opaque') return;
@@ -20,6 +23,8 @@ async function navigation(request) {
   const timer = setTimeout(() => controller.abort(), 4000);
   try {
     const response = await fetch(request, { signal: controller.signal });
+    // A proxy or CDN answers 5xx when the server behind it is down: the saved copy is better then.
+    if (response.status >= 500) return (await cache.match('/')) || response;
     await save(cache, '/', response);
     return response;
   } catch {
@@ -34,9 +39,21 @@ async function asset(request) {
   await save(cache, request, response);
   return response;
 }
+async function mapAsset(request) {
+  const cache = await caches.open(MAP_ASSETS_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response.ok) await cache.put(request, response.clone());
+  return response;
+}
 self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);
+  if (request.method === 'GET' && url.origin === MAP_ASSETS_ORIGIN) {
+    event.respondWith(mapAsset(request));
+    return;
+  }
   // Live API streams, maps, third-party requests and development modules pass through.
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || url.searchParams.has('_rsc')) return;
   if (request.mode === 'navigate' && url.pathname === '/') event.respondWith(navigation(request));

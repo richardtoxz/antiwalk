@@ -44,12 +44,12 @@ const swScript = `
 
 export const metadata: Metadata = {
   title: {
-    default: "Transporte DF - Encontre linhas e estações",
-    template: "%s | Transporte DF",
+    default: "Antiwalk - Ônibus e metrô do DF em tempo real",
+    template: "%s | Antiwalk",
   },
   description:
     "Aplicativo de transporte público do Distrito Federal. Encontre linhas de ônibus, estações de metrô e planeje suas rotas com facilidade.",
-  applicationName: "Transporte DF",
+  applicationName: "Antiwalk",
   keywords: [
     "transporte",
     "ônibus",
@@ -59,29 +59,19 @@ export const metadata: Metadata = {
     "rotas",
     "linhas",
   ],
-  authors: [{ name: "Transporte DF" }],
+  authors: [{ name: "Antiwalk" }],
   icons: {
     icon: [
-      {
-        url: "/icon-light-32x32.png",
-        media: "(prefers-color-scheme: light)",
-      },
-      {
-        url: "/icon-dark-32x32.png",
-        media: "(prefers-color-scheme: dark)",
-      },
-      {
-        url: "/icon.svg",
-        type: "image/svg+xml",
-      },
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-32x32.png", sizes: "32x32", type: "image/png" },
     ],
     apple: "/apple-icon.png",
   },
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
-    title: "Transporte DF",
+    statusBarStyle: "black-translucent",
+    title: "Antiwalk",
   },
   formatDetection: {
     telephone: false,

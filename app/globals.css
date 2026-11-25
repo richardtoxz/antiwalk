@@ -196,8 +196,9 @@
   }
 }
 
+/* On phones the bottom sheet rests at 15dvh; controls and the map credit sit just above it. */
 .maplibregl-ctrl-bottom-right {
-  bottom: 80px !important;
+  bottom: calc(15dvh + 12px) !important;
   right: 12px !important;
 }
 
@@ -209,12 +210,13 @@
 }
 
 .maplibregl-ctrl-bottom-left {
-  bottom: 8px !important;
+  bottom: calc(15dvh + 8px) !important;
   left: 8px !important;
 }
 
 @media (min-width: 768px) {
   .maplibregl-ctrl-bottom-left {
+    bottom: 8px !important;
     left: 400px !important;
   }
 }
@@ -242,6 +244,37 @@
 
 .dark .maplibregl-ctrl-icon {
   filter: invert(0.8) hue-rotate(180deg) !important;
+}
+
+/* Map popups follow the theme, so their text stays readable on the dark map. */
+.maplibregl-popup-content {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border: 1px solid var(--border);
+}
+
+.maplibregl-popup-close-button {
+  color: inherit;
+}
+
+.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--popover) !important;
+}
+
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--popover) !important;
+}
+
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--popover) !important;
+}
+
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--popover) !important;
 }
 
 .maplibregl-user-location-dot {

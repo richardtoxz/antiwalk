@@ -5,6 +5,7 @@ import {
   useEffect,
   useCallback,
   useState,
+  useSyncExternalStore,
   type PointerEvent,
   type TouchEvent,
 } from "react";
@@ -15,11 +16,18 @@ import {
   ChevronDown,
   Loader2,
   Radio,
+  Share2,
+  Star,
   TrainFront,
   X,
 } from "lucide-react";
+import { lineSelection, stationSelection } from "@/lib/navigation/favorites";
+import { recentsStore } from "@/lib/navigation/selection-store";
 import { cn } from "@/lib/utils";
 import ArrivalPanel from './ArrivalPanel';
+import ConnectionBanner, { useConnection } from './ConnectionBanner';
+import InstallApp from './InstallApp';
+import NearbyPanel from './NearbyPanel';
 import { positionQuality } from '@/lib/transport/quality';
 import type {
   BusRouteDetailsResponse,
@@ -32,8 +40,6 @@ import type {
   SocketConnectionState,
 } from "@/lib/transport/types";
 
-const RECENTS_STORAGE_KEY = "transporte-df-recent-searches";
-
 // Black or white, whichever reads better on the operator color.
 function readableOn(hex?: string | null): string {
   const match = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
@@ -41,18 +47,6 @@ function readableOn(hex?: string | null): string {
   const value = parseInt(match[1], 16);
   const luminance = (0.299 * (value >> 16) + 0.587 * ((value >> 8) & 255) + 0.114 * (value & 255)) / 255;
   return luminance > 0.6 ? "#000000" : "#FFFFFF";
-}
-
-function readRecents(): SearchSelection[] {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(RECENTS_STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is SearchSelection =>
-      Boolean(item) && typeof item.id === "string" && typeof item.title === "string" && (item.type === "line" || item.type === "station")
-    ).slice(0, 5);
-  } catch {
-    return [];
-  }
 }
 
 const SNAP_POINTS = {
@@ -95,6 +89,16 @@ interface BottomSheetProps {
   activeBusRoutesData: Record<string, BusRouteDetailsResponse>;
   busVehicles: BusVehicle[];
   onSelectResult: (result: SearchSelection) => void;
+  isRealtimeFallback?: boolean;
+  hasCachedRoutes?: boolean;
+  busMode?: "auto" | "light" | "full";
+  onBusModeChange?: (mode: "auto" | "light" | "full") => void;
+  uses3D?: boolean;
+  favorites?: SearchSelection[];
+  onToggleFavorite?: (item: SearchSelection) => void;
+  onShare?: () => Promise<"shared" | "copied" | "failed">;
+  onOpenNearbyLine?: (line: string, stopId?: number) => void;
+  onOpenNearbyStation?: (code: string, name: string) => void;
 }
 
 function getSnapPointFromHeight(heightPercent: number): SnapPoint {
@@ -203,9 +207,56 @@ export default function BottomSheet({
   activeBusRoutesData,
   busVehicles,
   onSelectResult,
+  isRealtimeFallback = false,
+  hasCachedRoutes = false,
+  busMode = "auto",
+  onBusModeChange,
+  uses3D = false,
+  favorites = [],
+  onToggleFavorite,
+  onShare,
+  onOpenNearbyLine,
+  onOpenNearbyStation,
 }: BottomSheetProps) {
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
+  // While the API is unreachable, one banner explains it; the views avoid repeating the error.
+  const disconnected = useConnection().status !== "online";
+  // The full stop list is collapsed by default and opens on request, per line and direction.
+  const [expandedStops, setExpandedStops] = useState<string | null>(null);
+  const stopListKey = `${focusedLine}:${focusedLine ? lineDirections[focusedLine] ?? 0 : 0}`;
+  const showAllStops = expandedStops === stopListKey;
+  const setShowAllStops = (open: boolean) => setExpandedStops(open ? stopListKey : null);
+  const share = async () => {
+    if (!onShare) return;
+    const result = await onShare();
+    setShareStatus(result === "copied" ? "Link copiado" : result === "failed" ? "Não foi possível copiar o link" : null);
+    if (result !== "shared") window.setTimeout(() => setShareStatus(null), 2500);
+  };
+  const isFavorite = (id: string) => favorites.some((f) => f.id === id);
+  const viewActions = (item: SearchSelection) => (
+    <div className="flex shrink-0 items-center">
+      {onToggleFavorite && (
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(item)}
+          aria-pressed={isFavorite(item.id)}
+          aria-label={isFavorite(item.id) ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+          className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-accent"
+        >
+          <Star className={cn("h-5 w-5", isFavorite(item.id) && "fill-current text-amber-600 dark:text-cta")} aria-hidden />
+        </button>
+      )}
+      {onShare && (
+        <button type="button" onClick={share} aria-label="Compartilhar" className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-accent">
+          <Share2 className="h-5 w-5" aria-hidden />
+        </button>
+      )}
+    </div>
+  );
   const sheetRef = useRef<HTMLDivElement>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint>("peek");
+  const currentSnapRef = useRef<SnapPoint>("peek");
+  useEffect(() => { currentSnapRef.current = currentSnap; }, [currentSnap]);
   const [isDragging, setIsDragging] = useState(false);
   const [heightPercent, setHeightPercent] = useState<number>(SNAP_POINTS.peek);
 
@@ -413,6 +464,28 @@ export default function BottomSheet({
     [currentSnap, animateToSnap, isDesktop]
   );
 
+  // Choosing something to look at raises a collapsed sheet on phones, so its details show right away.
+  const selectionKey = `${focusedLine ?? ""}|${selectedStationCode ?? ""}|${selectedStopId ?? ""}`;
+  const lastSelection = useRef(selectionKey);
+  useEffect(() => {
+    if (selectionKey === lastSelection.current) return;
+    lastSelection.current = selectionKey;
+    if (selectionKey === "||" || isDesktop) return;
+    const frame = requestAnimationFrame(() => {
+      if (currentSnapRef.current === "peek" || currentSnapRef.current === "closed") animateToSnap("half");
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectionKey, isDesktop, animateToSnap]);
+
+  // A stop chosen on the map scrolls into view in the list.
+  useEffect(() => {
+    if (selectedStopId == null) return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(`[data-stop-id="${selectedStopId}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedStopId]);
+
   useEffect(() => {
     if (currentSnap === "full" && !isDesktop) {
       document.body.style.overflow = "hidden";
@@ -428,13 +501,9 @@ export default function BottomSheet({
   const sheetHeight = isDesktop ? undefined : `${heightPercent}dvh`;
   const lineColor = currentRouteData?.route.color ?? "var(--muted)";
   const freshCount = busVehicles.filter((v) => positionQuality(v, now) === "fresh").length;
-  const nothingSelected = selectedLines.length === 0 && !selectedStationCode;
 
-  // Recent searches are written by the search field; re-read them whenever the home view shows.
-  const [recents, setRecents] = useState<SearchSelection[]>([]);
-  useEffect(() => {
-    if (nothingSelected) setRecents(readRecents());
-  }, [nothingSelected]);
+  // Recent searches are written by the search field.
+  const recents = useSyncExternalStore(recentsStore.subscribe, recentsStore.read, recentsStore.readOnServer).slice(0, 5);
 
   return (
     <div
@@ -504,6 +573,8 @@ export default function BottomSheet({
           maxHeight: isDesktop ? undefined : `calc(${heightPercent}dvh - 60px)`,
         }}
       >
+        <ConnectionBanner />
+
         {(selectedLines.length > 0 || selectedStationCode) && (
           <div className="mb-4 flex items-center gap-1.5 overflow-x-auto scrollbar-none select-none">
             {selectedStationCode && (
@@ -550,6 +621,29 @@ export default function BottomSheet({
               Busque uma linha ou estação no campo acima, ou trace uma rota entre dois lugares.
             </p>
 
+            {onOpenNearbyLine && onOpenNearbyStation && (
+              <NearbyPanel onOpenLine={onOpenNearbyLine} onOpenStation={onOpenNearbyStation} />
+            )}
+
+            {favorites.length > 0 && (
+              <section className="mt-5" aria-label="Favoritos">
+                <h3 className="text-xs font-medium text-muted-foreground">Favoritos</h3>
+                <ul className="mt-1 divide-y divide-border">
+                  {favorites.map((item) => (
+                    <li key={item.id}>
+                      <button type="button" onClick={() => onSelectResult(item)} className="flex min-h-12 w-full items-center gap-3 text-left">
+                        <Star className="h-4 w-4 shrink-0 fill-current text-amber-600 dark:text-cta" aria-hidden />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{item.title}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{item.subtitle}</span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             {recents.length > 0 && (
               <section className="mt-5" aria-label="Buscas recentes">
                 <h3 className="text-xs font-medium text-muted-foreground">Recentes</h3>
@@ -573,15 +667,56 @@ export default function BottomSheet({
               </section>
             )}
 
+            <InstallApp />
+
             <div className="mt-5 flex items-center gap-3 border-t border-border pt-3 text-sm">
               <TrainFront className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="flex-1 font-medium">Metrô</span>
               <span className="text-right text-muted-foreground">{formatMetroOperation(metroStatus)}</span>
             </div>
-            <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-              <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
-              {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
-            </p>
+            {!disconnected && (
+              <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <span className={cn("h-1.5 w-1.5 rounded-full", socketState === "open" ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
+                {socketState === "open" ? "Dados ao vivo conectados" : "Reconectando aos dados ao vivo"}
+              </p>
+            )}
+            {onBusModeChange && (
+              <details className="group mt-4 border-t border-border">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-medium [&::-webkit-details-marker]:hidden">
+                  Ajustes
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden />
+                </summary>
+              <fieldset className="pb-2">
+                <legend className="sr-only">Ônibus no mapa</legend>
+                <p className="text-sm font-medium" aria-hidden>Ônibus no mapa</p>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  {([["auto", "Automático"], ["light", "Leve"], ["full", "3D"]] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={busMode === value}
+                      onClick={() => onBusModeChange(value)}
+                      className={cn(
+                        "min-h-11 rounded-lg border text-sm font-medium",
+                        busMode === value ? "border-foreground bg-foreground text-background" : "border-border hover:bg-accent"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground" suppressHydrationWarning>
+                  {uses3D
+                    ? "Usando modelos 3D. Aproxime o mapa para ver os ônibus e as paradas."
+                    : busMode === "light"
+                      ? "Usando ícones leves, que economizam bateria."
+                      : busMode === "full"
+                        ? "Este aparelho não oferece 3D. Usando ícones leves."
+                        : "Usando ícones leves neste aparelho."}
+                </p>
+              </fieldset>
+              </details>
+            )}
           </div>
         )}
 
@@ -596,14 +731,16 @@ export default function BottomSheet({
                 {focusedLine}
               </span>
               <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold leading-snug">
-                  {currentRouteData?.route.longName ?? "Carregando itinerário…"}
+                <h2 className="line-clamp-2 text-base font-semibold leading-snug" title={currentRouteData?.route.longName}>
+                  {currentRouteData?.route.longName ?? (busError || disconnected ? "Itinerário indisponível no momento" : "Carregando itinerário…")}
                 </h2>
                 {currentRouteData?.route.price ? (
                   <p className="text-xs text-muted-foreground">Tarifa R$ {currentRouteData.route.price.toFixed(2).replace(".", ",")}</p>
                 ) : null}
               </div>
+              {viewActions(lineSelection(focusedLine, currentRouteData?.route.longName))}
             </div>
+            {shareStatus && <p role="status" className="mt-2 text-xs text-muted-foreground">{shareStatus}</p>}
 
             {currentRouteData && currentRouteData.directions.length > 1 && (() => {
               const current = currentRouteData.directions.find((d) => d.directionId === currentDirectionId) ?? currentRouteData.directions[0];
@@ -628,9 +765,15 @@ export default function BottomSheet({
 
             <p role="status" className="mt-3 flex flex-wrap items-center gap-x-2 text-sm">
               <span className={cn("h-2 w-2 shrink-0 rounded-full", freshCount > 0 ? "bg-cta" : "bg-muted-foreground/50")} aria-hidden />
-              <span className="font-medium">{freshCount > 0 ? `${freshCount} ônibus ao vivo` : dataLabels[busDataQuality]}</span>
-              <span className="text-muted-foreground">{formatTimeAgo(busLastUpdate, now)}</span>
+              <span className="font-medium">{freshCount > 0 ? `${freshCount} ônibus ao vivo` : disconnected ? "Posições ao vivo indisponíveis" : dataLabels[busDataQuality]}</span>
+              {(!disconnected || busLastUpdate) && <span className="text-muted-foreground">{formatTimeAgo(busLastUpdate, now)}</span>}
             </p>
+            {isRealtimeFallback && (
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">Conexão ao vivo interrompida. Consultando as posições a cada 15 segundos.</p>
+            )}
+            {hasCachedRoutes && (
+              <p className="mt-1 text-xs text-muted-foreground">Itinerário salvo no aparelho. A atualização ainda não foi confirmada.</p>
+            )}
             {freshCount > 0 && ['mixed', 'stale', 'expired', 'unknown', 'unavailable'].includes(busDataQuality) && (
               <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                 {dataLabels[busDataQuality]}. Posições antigas não confirmam a chegada do ônibus.
@@ -644,7 +787,7 @@ export default function BottomSheet({
               </p>
             )}
 
-            {busError && (
+            {busError && !disconnected && (
               <div role="alert" className="mt-4 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
                 <p className="flex items-start gap-2">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
@@ -668,8 +811,28 @@ export default function BottomSheet({
                   {routeStops.map((stop, index) => {
                     const isEdge = index === 0 || index === routeStops.length - 1;
                     const isSelected = stop.stopId === selectedStopId;
+                    // Collapsed: the first and last stops, the chosen one, and one "N stops" row per gap.
+                    if (!showAllStops && !isEdge && !isSelected) {
+                      const previousShown = index - 1 === 0 || routeStops[index - 1]?.stopId === selectedStopId;
+                      if (!previousShown) return null;
+                      let hidden = 0;
+                      for (let i = index; i < routeStops.length - 1 && routeStops[i].stopId !== selectedStopId; i++) hidden++;
+                      return (
+                        <li key={`gap:${index}`} className="relative pl-6">
+                          <span className="absolute left-[2px] top-[18px] h-2 w-2 rounded-full" style={{ backgroundColor: lineColor }} aria-hidden />
+                          <button
+                            type="button"
+                            onClick={() => setShowAllStops(true)}
+                            className="flex min-h-12 w-full items-center gap-2 border-b border-border text-left text-sm text-muted-foreground hover:text-foreground"
+                          >
+                            <span className="flex-1">{hidden === 1 ? "Mais 1 parada" : `Mais ${hidden} paradas`}</span>
+                            <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+                          </button>
+                        </li>
+                      );
+                    }
                     return (
-                      <li key={`${stop.stopId}:${index}`} className="relative pl-6">
+                      <li key={`${stop.stopId}:${index}`} className="relative pl-6" data-stop-id={stop.stopId}>
                         <span
                           className="absolute left-0 top-[18px] h-3 w-3 rounded-full border-2 bg-card"
                           style={{ borderColor: lineColor, backgroundColor: isEdge || isSelected ? lineColor : undefined }}
@@ -689,6 +852,11 @@ export default function BottomSheet({
                     );
                   })}
                 </ol>
+                {showAllStops && routeStops.length > 4 && (
+                  <button type="button" onClick={() => setShowAllStops(false)} className="mt-1 min-h-11 text-sm font-medium text-muted-foreground hover:text-foreground">
+                    Mostrar menos
+                  </button>
+                )}
               </section>
             )}
           </div>
@@ -706,7 +874,9 @@ export default function BottomSheet({
                 <p className="text-xs text-muted-foreground">Linha {selectedStation?.linha ?? "indisponível"}</p>
                 <p className="text-xs text-muted-foreground">{formatMetroOperation(metroStatus)}</p>
               </div>
+              {selectedStationCode && viewActions(stationSelection(selectedStationCode, selectedStation?.nome, selectedStation?.linha))}
             </div>
+            {shareStatus && <p role="status" className="mt-2 text-xs text-muted-foreground">{shareStatus}</p>}
 
             {selectedStation && (
               <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Plataformas">
@@ -730,7 +900,7 @@ export default function BottomSheet({
 
             <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
               <Radio className="h-3.5 w-3.5" aria-hidden />
-              {getRealtimeModeLabel(metroRealtimeMode)}
+              {disconnected ? "Previsões ao vivo indisponíveis" : getRealtimeModeLabel(metroRealtimeMode)}
             </p>
 
             {isMetroLoading && (
@@ -740,7 +910,7 @@ export default function BottomSheet({
               </p>
             )}
 
-            {metroError && (
+            {metroError && !disconnected && (
               <p role="alert" className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                 <span>{metroError}</span>

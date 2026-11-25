@@ -1,13 +1,25 @@
 {
-  "name": "Transporte DF - Horários e Rotas",
-  "short_name": "Transporte DF",
+  "id": "/",
+  "name": "Antiwalk - Ônibus e metrô do DF",
+  "short_name": "Antiwalk",
   "description": "Aplicativo de transporte público do Distrito Federal. Encontre linhas de ônibus, estações de metrô e horários em tempo real.",
+  "lang": "pt-BR",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "background_color": "#E9E4D8",
   "theme_color": "#000000",
-  "orientation": "portrait",
-  "categories": ["navigation", "travel", "public transit"],
+  "orientation": "any",
+  "categories": [
+    "navigation",
+    "travel"
+  ],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/icon-192x192.png",
@@ -20,17 +32,29 @@
       "type": "image/png"
     },
     {
-      "src": "/icon-512x512.png",
+      "src": "/icon-maskable-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
     }
   ],
   "shortcuts": [
     {
-      "name": "Procurar Linha",
-      "url": "/?search=true",
-      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
+      "name": "Traçar rota",
+      "short_name": "Rota",
+      "url": "/?rota=1",
+      "icons": [
+        {
+          "src": "/icon-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     }
   ]
 }

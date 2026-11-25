@@ -5,16 +5,33 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre 6 looks for its worker next to its own module file, which no longer
 // holds once the bundler moves that file. Bundle the worker and point to it.
-import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import { Protocol } from "pmtiles";
-import { buildMapStyle } from "@/lib/map/style";
+import bundledWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+
+// In development the worker is served untouched by the maplibre-worker-dev plugin (vite.config.ts),
+// because Vite's dev transform adds code that needs a document. Builds use the bundled worker.
+const maplibreWorkerUrl = import.meta.env.DEV ? "/__maplibre/maplibre-gl-worker.mjs" : bundledWorkerUrl;
+import { PMTiles, Protocol } from "pmtiles";
+import { CachedSource, createIndexedDbByteStore, type ByteStore } from "@/lib/map/cached-source";
+import { buildMapStyle, mapTilesAbsoluteUrl } from "@/lib/map/style";
+import { BUS_ICON_PREFIX, drawBusIcon } from "@/lib/map/bus-icon";
 import { useTheme } from "./ThemeProvider";
+
 
 // Lets MapLibre read tiles straight from a PMTiles archive with range requests.
 let pmtilesRegistered = false;
 function registerPmtiles() {
   if (pmtilesRegistered) return;
-  maplibregl.addProtocol("pmtiles", new Protocol().tile);
+  const protocol = new Protocol();
+  // Map areas already seen are kept on the device, so the map still draws without a connection.
+  const storeReady = createIndexedDbByteStore().catch(() => null);
+  const store: ByteStore = {
+    get: async (key) => (await storeReady)?.get(key),
+    set: async (key, value) => { await (await storeReady)?.set(key, value); },
+    clear: async () => { await (await storeReady)?.clear(); },
+  };
+  const url = mapTilesAbsoluteUrl();
+  protocol.add(new PMTiles(new CachedSource(url, store)));
+  maplibregl.addProtocol("pmtiles", protocol.tile);
   pmtilesRegistered = true;
 }
 
@@ -27,9 +44,11 @@ export default function Map({ onMapReady }: MapProps) {
   const map = useRef<maplibregl.Map | null>(null);
   const { resolvedTheme } = useTheme();
   const themeRef = useRef(resolvedTheme);
-  themeRef.current = resolvedTheme;
   const readyRef = useRef(onMapReady);
-  readyRef.current = onMapReady;
+  useEffect(() => {
+    themeRef.current = resolvedTheme;
+    readyRef.current = onMapReady;
+  });
 
   const currentThemeRef = useRef(resolvedTheme);
 
@@ -52,15 +71,27 @@ export default function Map({ onMapReady }: MapProps) {
         [-48.342125, -16.161104],
         [-47.282869, -15.426097],
       ],
-      pitchWithRotate: false,
+      pitchWithRotate: true,
+      touchPitch: false,
       dragRotate: false,
       touchZoomRotate: true,
       attributionControl: false,
     });
 
+    // Development-only handle for inspecting the map from the browser console.
+    if (import.meta.env.DEV) (window as unknown as { __antiwalkMap?: maplibregl.Map }).__antiwalkMap = map.current;
+
     map.current.on("styleimagemissing", (event) => {
       if (!map.current || map.current.hasImage(event.id)) {
         return;
+      }
+
+      if (event.id.startsWith(BUS_ICON_PREFIX)) {
+        const icon = drawBusIcon(event.id.slice(BUS_ICON_PREFIX.length));
+        if (icon) {
+          map.current.addImage(event.id, { width: icon.width, height: icon.height, data: icon.data }, { pixelRatio: icon.pixelRatio });
+          return;
+        }
       }
 
       const size = 2;
