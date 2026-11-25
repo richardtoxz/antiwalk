@@ -2,6 +2,7 @@ import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
 import vinext from "vinext";
 import { defineConfig, type Plugin } from "vite";
+import { cloudflare } from "@cloudflare/vite-plugin";
 
 /**
  * Serves MapLibre's worker modules untouched in development. Vite's dev transform adds its
@@ -25,5 +26,14 @@ function maplibreWorkerInDev(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [maplibreWorkerInDev(), vinext()],
+  plugins: [
+    maplibreWorkerInDev(),
+    vinext(),
+    cloudflare({
+      viteEnvironment: {
+        name: "rsc",
+        childEnvironments: ["ssr"],
+      },
+    }),
+  ],
 });

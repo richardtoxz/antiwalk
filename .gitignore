@@ -47,3 +47,4 @@ next-env.d.ts
 
 # map tiles (generated, hosted outside git)
 /public/map/*.pmtiles
+.cloudflare/

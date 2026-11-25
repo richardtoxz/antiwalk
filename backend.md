@@ -34,9 +34,19 @@ Cada veículo traz `vehicleId`, `lat`, `lng`, `heading` (graus, 0 = norte), `obs
 |---|---|---|
 | GET | `/journeys/location-services` | Diz se a busca de endereços e as caminhadas pelas ruas estão ativas |
 | GET | `/journeys/places?q=` | Lugares, paradas e estações para a busca e para origem e destino |
+| GET | `/places/nearby?lat=&lng=&radius=&limit=&kinds=` | Paradas de ônibus e estações próximas |
 | POST | `/journeys` | Opções de viagem entre dois pontos, com limite de caminhada |
 
 O corpo de `POST /journeys` é `{ origin, destination, maxWalkMeters }`, onde origem e destino são lugares devolvidos por `/journeys/places` ou pontos escolhidos no mapa. Cada opção traz duração, horário de chegada, trocas, metros a pé, tarifa somada e os trechos (`walk`, `bus` ou `metro`) com seus traçados.
+
+## Viagem compartilhada
+
+| Método | Caminho | Uso no app |
+|---|---|---|
+| POST | `/rides` | Inicia uma viagem compartilhada vinculada a um ônibus e parada opcional de descida |
+| GET | `/rides/:token` | Consulta o estado atual e o trajeto de uma viagem compartilhada |
+| GET | `/rides/:token/stream` | Fluxo SSE com posições ao vivo da viagem compartilhada |
+| DELETE | `/rides/:token` | Encerra a viagem compartilhada (via `Authorization: Bearer <ownerToken>`) |
 
 ## Erros
 
