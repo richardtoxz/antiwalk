@@ -9,11 +9,11 @@ export interface RideStart {
   alightStopId: number | null;
 }
 
-export function startRide(start: RideStart): Promise<StartedRide> {
+export function startRide(start: RideStart, turnstileToken?: string): Promise<StartedRide> {
   return fetchJson<StartedRide>("/rides", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(start),
+    body: JSON.stringify({ ...start, ...(turnstileToken ? { "cf-turnstile-response": turnstileToken } : {}) }),
     timeoutMs: 20000,
   });
 }

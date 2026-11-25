@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MetroStationsResponse, SearchSelection } from "@/lib/transport/types";
-import { getPlaces, type Place } from "@/lib/transport/journeys";
+import { getPlaces, placeKindLabel, type Place } from "@/lib/transport/journeys";
 import { recentsStore, rememberSearch } from "@/lib/navigation/selection-store";
 import ThemeToggle from "./ThemeToggle";
 
@@ -362,7 +362,7 @@ export default function SearchBar({
                               key={place.id ?? `${place.lat}:${place.lng}:${index}`}
                               icon={place.kind === "metro" ? <TrainFront className="h-4 w-4" aria-hidden /> : <MapPin className="h-4 w-4" aria-hidden />}
                               title={place.name}
-                              subtitle={place.kind === "metro" ? "Estação de metrô" : place.kind === "bus" ? "Parada de ônibus" : "Endereço"}
+                              subtitle={placeKindLabel(place)}
                               trailing="Ir"
                               onClick={() => handleGoTo(place)}
                             />

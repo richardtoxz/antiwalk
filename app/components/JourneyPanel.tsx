@@ -2,10 +2,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDownUp, ArrowLeft, Bus, ChevronRight, Footprints, Loader2, MapPin, TrainFront } from 'lucide-react';
-import { getJourneys, getPlaces, getLocationServices, localTime, type Place, type JourneyOption } from '@/lib/transport/journeys';
+import { getJourneys, getPlaces, getLocationServices, localTime, placeKindLabel, type Place, type JourneyOption } from '@/lib/transport/journeys';
 import { getErrorMessage } from '@/lib/transport/hooks';
 import { usePageVisible, useVisibleClock } from '@/lib/transport/visibility';
 import { useConnection } from './ConnectionBanner';
+import TurnstileWidget, { TURNSTILE_ENABLED } from './TurnstileWidget';
 
 function PlacePicker({ label, value, onChange, onMap, addressesEnabled }: { label: string; value: Place | null; onChange: (place: Place | null) => void; onMap: () => void; addressesEnabled: boolean }) {
   const [text, setText] = useState(value?.name || '');
@@ -46,7 +47,7 @@ function PlacePicker({ label, value, onChange, onMap, addressesEnabled }: { labe
       {places.map((p, i) => <li key={p.id} id={`${id}-${i}`} role="option" aria-selected={i === highlight}>
         <button type="button" onClick={() => choose(p)} className={`min-h-11 w-full break-words px-3 py-2 text-left text-sm ${i === highlight ? 'bg-muted' : ''}`}>
           <span className="block font-medium">{p.name}</span>
-          <span className="block text-xs text-muted-foreground">{p.kind === 'metro' ? 'Estação de metrô' : p.kind === 'address' ? 'Endereço' : 'Parada de ônibus'}</span>
+          <span className="block text-xs text-muted-foreground">{placeKindLabel(p)}</span>
         </button>
       </li>)}
       {(query.isFetching || !matching) && <li className="p-3 text-sm text-muted-foreground" role="status">Buscando…</li>}
@@ -64,7 +65,9 @@ export default function JourneyPanel({ origin, destination, onOrigin, onDestinat
   const closeRef = useRef(onClose);
   useEffect(() => { closeRef.current = onClose; }, [onClose]);
   const [maxWalk, setMaxWalk] = useState(800);
-  const [request, setRequest] = useState<{ origin: Place; destination: Place; walk: number; sequence: number } | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+  const [request, setRequest] = useState<{ origin: Place; destination: Place; walk: number; sequence: number; turnstileToken?: string } | null>(null);
   const [sort, setSort] = useState('duration');
   const now = useVisibleClock();
   const visible = usePageVisible();
@@ -79,8 +82,20 @@ export default function JourneyPanel({ origin, destination, onOrigin, onDestinat
     document.addEventListener('keydown', handler);
     return () => { document.removeEventListener('keydown', handler); previous?.focus(); };
   }, []);
-  const query = useQuery({ queryKey: ['journey', 'options', request], queryFn: ({ signal }) => getJourneys(request!.origin, request!.destination, request!.walk, signal),
-    enabled: Boolean(request) && visible, retry: false, staleTime: 30000, refetchOnWindowFocus: false });
+  const query = useQuery({
+    queryKey: ['journey', 'options', request],
+    queryFn: async ({ signal }) => {
+      try {
+        return await getJourneys(request!.origin, request!.destination, request!.walk, signal, request!.turnstileToken);
+      } finally {
+        if (TURNSTILE_ENABLED) {
+          setTurnstileToken('');
+          setTurnstileResetKey(k => k + 1);
+        }
+      }
+    },
+    enabled: Boolean(request) && visible, retry: false, staleTime: Infinity, refetchOnMount: false, refetchOnReconnect: false, refetchOnWindowFocus: false
+  });
   const options = [...(query.data?.options || [])].sort((a, b) => sort === 'walking' ? a.walkMeters - b.walkMeters : sort === 'transfers' ? a.transfers - b.transfers : a.durationMinutes - b.durationMinutes);
   const current = request && origin && destination && request.origin.lat === origin.lat && request.origin.lng === origin.lng && request.destination.lat === destination.lat && request.destination.lng === destination.lng && request.walk === maxWalk;
   const addressesEnabled = Boolean(services.data?.addresses);
@@ -116,7 +131,10 @@ export default function JourneyPanel({ origin, destination, onOrigin, onDestinat
         </div>
       </fieldset>
 
-      <button type="button" disabled={!origin || !destination || query.isFetching} onClick={() => origin && destination && setRequest({ origin, destination, walk: maxWalk, sequence: Date.now() })}
+      <TurnstileWidget action="journeys" onToken={setTurnstileToken} resetKey={turnstileResetKey} />
+      {TURNSTILE_ENABLED && !turnstileToken && <p className="mt-2 text-xs text-muted-foreground">Verificando segurança…</p>}
+
+      <button type="button" disabled={!origin || !destination || query.isFetching || (TURNSTILE_ENABLED && !turnstileToken)} onClick={() => origin && destination && setRequest({ origin, destination, walk: maxWalk, sequence: Date.now(), turnstileToken: turnstileToken || undefined })}
         className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 font-semibold text-primary-foreground disabled:opacity-50">
         {query.isFetching && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}{query.isFetching ? 'Calculando opções…' : 'Ver opções'}</button>
       {(!origin || !destination) && <p className="mt-2 text-xs text-muted-foreground">Escolha a origem e o destino para comparar as opções.</p>}

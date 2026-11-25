@@ -9,6 +9,7 @@ import {
 } from "@/lib/transport/rides";
 import { useRide } from "@/lib/transport/use-ride";
 import LineChip from "./LineChip";
+import TurnstileWidget, { TURNSTILE_ENABLED } from "./TurnstileWidget";
 
 /** A bus the passenger may be on, as the map shows it. */
 export interface RideCandidate {
@@ -84,6 +85,8 @@ function StartRideCard({ candidate, onClose, onStarted }: {
   const [stopId, setStopId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
 
   const start = async () => {
     setBusy(true);
@@ -92,7 +95,7 @@ function StartRideCard({ candidate, onClose, onStarted }: {
       const started = await startRide({
         routeId: candidate.routeId, tripId: candidate.tripId, vehicleId: candidate.vehicleId,
         alightStopId: stopId ? Number(stopId) : null,
-      });
+      }, turnstileToken || undefined);
       const own: OwnRide = {
         shareToken: started.shareToken, ownerToken: started.ownerToken,
         line: candidate.line, directionId: candidate.directionId, vehicleId: candidate.vehicleId,
@@ -102,6 +105,11 @@ function StartRideCard({ candidate, onClose, onStarted }: {
     } catch (failure) {
       setError(rideErrorMessage(failure, "Não foi possível começar a viagem agora."));
       setBusy(false);
+    } finally {
+      if (TURNSTILE_ENABLED) {
+        setTurnstileToken("");
+        setTurnstileResetKey(k => k + 1);
+      }
     }
   };
 
@@ -123,8 +131,10 @@ function StartRideCard({ candidate, onClose, onStarted }: {
         <option value="">Ainda não sei</option>
         {candidate.stops.map((stop, index) => <option key={`${stop.stopId}:${index}`} value={stop.stopId}>{stop.name}</option>)}
       </select>
+      <TurnstileWidget action="rides" onToken={setTurnstileToken} resetKey={turnstileResetKey} />
+      {TURNSTILE_ENABLED && !turnstileToken && <p className="mt-2 text-xs text-muted-foreground">Verificando segurança…</p>}
       <div className="mt-3 flex gap-2">
-        <button type="button" onClick={start} disabled={busy} className={PRIMARY}>
+        <button type="button" onClick={start} disabled={busy || (TURNSTILE_ENABLED && !turnstileToken)} className={PRIMARY}>
           <Share2 className="h-4 w-4" aria-hidden />{busy ? "Começando…" : "Compartilhar viagem"}
         </button>
       </div>
